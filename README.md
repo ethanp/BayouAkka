@@ -53,7 +53,32 @@ There is an `object CommandLine` who simply parks on `StdIn`. It is **not an act
 
 #### Version Vector
 
-**The part that confuses me is how it changes size to accommodate nodes coming and going.**
+I think this thing is just a `mutable.Map[BayouID, LC]`
+
+And it goes a little-something like-a this:
+
+    type LC = Int
+    case class BayouID(LC, BayouID)
+    val firstServer = BayouID(0, 0)   // see Bayou 2, pg. 295
+    class VersionVector(myID: BayouID, server: Server) {
+        val vv = mutable.Map.empty[BayouID, LC]
+        def rcvCreationWrite(sender: ActorRef) = {
+            val timestamp: LC = server.write(???)
+            val newID: BayouID = BayouID(timestamp, myID)
+            vv.put(newID, timestamp)
+            sender ! YourBayouID(newID)
+        }
+    }
+
+    /* "After issuing its creation write, the newly created server needs to
+        perform anti-entropy with the server that just created it" */
+    Server.receive = {
+        case YourBayouID(theID) =>
+            myBayouID = theID
+            sender ! SendMeUpdates(myVersionVector)
+        case Updates(theUpdates) =>
+            theUpdates foreach log.write
+    }
 
 ### Methods
 
