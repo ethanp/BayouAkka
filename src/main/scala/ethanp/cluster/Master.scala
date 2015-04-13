@@ -6,7 +6,7 @@ import akka.actor._
 import akka.cluster.{Member, Cluster}
 import akka.cluster.ClusterEvent._
 import akka.cluster.MemberStatus.Up
-import Common.{getPath, getSelection}
+import ethanp.cluster.Common.{NodeID, getPath, getSelection}
 import System.err
 
 import scala.sys.process._
@@ -25,12 +25,12 @@ object Master extends App {
     def createClientProc() = s"sbt execClient".run()
     def createServerProc() = s"sbt execServer".run()
 
-    def createClient(cid: Int, sid: Int) = {
+    def createClient(cid: NodeID, sid: NodeID) = {
         clientID = cid
         serverID = sid
         Client.main(Array.empty)
     }
-    def createServer(sid: Int) = {
+    def createServer(sid: NodeID) = {
         serverID = sid
         Server.main(Array.empty)
     }
@@ -38,8 +38,8 @@ object Master extends App {
     /* make the master the first seed node */
     val clusterKing = Common.joinClusterAs("2551", "master").actorOf(Props[Master], name = "master")
 
-    @volatile var clientID = -1
-    @volatile var serverID = -1
+    @volatile var clientID: NodeID = -1
+    @volatile var serverID: NodeID = -1
 
     /* THE COMMAND LINE INTERFACE */
     val sc = new Scanner(System.in)
@@ -84,18 +84,20 @@ class Master extends Actor with ActorLogging {
     override def preStart(): Unit = cluster.subscribe(self, classOf[MemberUp], classOf[MemberRemoved])
     override def postStop(): Unit = cluster unsubscribe self
 
-    var members = Map.empty[Int, Member]
+    var members = Map.empty[NodeID, Member]
 
-    def servers = members collect { case (k, v) if v.roles.head == "server" ⇒ v }
-    def clients = members collect { case (k, v) if v.roles.head == "client" ⇒ v }
+    def servers: Map[Member, NodeID] = members collect { case (k, v) if v.roles.head == "server" ⇒ v → k }
+    def clients: Map[Member, NodeID] = members collect { case (k, v) if v.roles.head == "client" ⇒ v → k }
     def refFromMember(m: Member) = getSelection(getPath(m), context)
-    def getMember(id: Int) = refFromMember(members(id))
+    def getMember(id: NodeID) = refFromMember(members(id))
 
-    def broadcastServers(msg: Msg) = broadcast(servers) _
-    def broadcastClients(msg: Msg) = broadcast(clients) _
-    def broadcast(who: Iterable[Member])(msg: Msg) = members
+    def serverPaths = servers map { case (mem, i) ⇒ getPath(mem) → i }
+    def broadcastServers(msg: Msg) = broadcast(servers map (_._1)) _
+    def broadcastClients(msg: Msg) = broadcast(clients map (_._1)) _
+    def broadcast(who: Iterable[Member])(msg: Msg) =
+        members foreach { case (i,m) ⇒ refFromMember(m) ! msg}
 
-    def firstFreeID(set: Set[Int]) = (Stream from 0 filterNot (set contains)) head
+    def firstFreeID(set: Set[NodeID]) = (Stream from 0 filterNot (set contains)) head
 
     override def receive : Actor.Receive = {
 
@@ -103,15 +105,15 @@ class Master extends Actor with ActorLogging {
         case state: CurrentClusterState => state.members filter (_.status == Up) foreach identity
 
         /* CLI Events */
-        case m@Forward(id) ⇒ getMember(id) forward m
+        case m @ Forward(id) ⇒ getMember(id) forward m
         case m: BrdcstServers ⇒ broadcastServers(m)
 
         /* Cluster Events */
         case MemberUp(m) =>
               m.roles.head match {
             case "client" ⇒
-                val cid: Int = Master.clientID
-                val sid: Int = Master.serverID
+                val cid: NodeID = Master.clientID
+                val sid: NodeID = Master.serverID
 
                 if (cid == -1) { err println "cid hasn't been set"; return null }
                 if (sid == -1) { err println "sid hasn't been set"; return null }
@@ -125,7 +127,7 @@ class Master extends Actor with ActorLogging {
                 client ! ServerPath(getPath(members(Master.serverID)))
 
             case "server" ⇒
-                val sid: Int = Master.serverID
+                val sid: NodeID = Master.serverID
 
                 if (sid == -1) { err println "sid hasn't been set"; return null }
                 if (members contains sid) { err println s"Node $sid already exists"; return null }
@@ -133,7 +135,8 @@ class Master extends Actor with ActorLogging {
                 members += (sid → m)  // save reference to this member
 
                 val server = refFromMember(m)
-                server ! NodeID(sid)
+                server ! IDMsg(sid)
+                server ! Servers(serverPaths)
 
             case "master" ⇒ log info "ignoring Master MemberUp"
         }
