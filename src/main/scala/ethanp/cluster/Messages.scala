@@ -1,9 +1,7 @@
 package ethanp.cluster
 
 import akka.actor.ActorPath
-import ethanp.cluster.Common.{URL, INF, LCValue, NodeID}
-
-import scala.collection.mutable
+import ethanp.cluster.Common.{INF, LCValue, NodeID, URL}
 
 /**
  * Ethan Petuchowski
@@ -48,20 +46,25 @@ case class  Servers(servers: Map[NodeID, ActorPath])    extends Administrativa
 case object ClientConnected                             extends Administrativa
 
 case class Write(acceptStamp: LCValue, timestamp: Timestamp, action: Action) extends Ordered[Write] {
-    override def compare(that: Write): NodeID = timestamp compare that.timestamp
+    override def compare(that: Write): Int = timestamp compare that.timestamp
 
     /* 'OP_TYPE:(OP_VALUE):STABLE_BOOL' */
     def str = action.str + { if (acceptStamp == INF) "TRUE" else "FALSE" }
 }
 case class Timestamp(lcVal: LCValue, acceptor: ServerName) extends Ordered[Timestamp] {
-    override def compare(that: Timestamp): NodeID =
+    override def compare(that: Timestamp): Int =
         if (lcVal != that.lcVal) lcVal compare that.lcVal
         else acceptor compare that.acceptor
 }
-case class VersionVector(m: mutable.Map[ServerName, LCValue]) extends Ordered[VersionVector] {
-    override def compare(that: VersionVector): NodeID = ???
-}
 case class ServerName(name: String) extends Ordered[ServerName] {
     // I think any (associative, commutative, reflexive, transitive) comparison is probably fine
-    override def compare(that: ServerName): NodeID = name compare that.name
+    override def compare(that: ServerName): Int = name compare that.name
 }
+
+sealed trait AntiEntropyMsg
+case object LemmeUpgradeU extends AntiEntropyMsg
+case class VersionVector(m: Map[ServerName, LCValue] = Map.empty[ServerName, LCValue])
+        extends Ordered[VersionVector] with AntiEntropyMsg {
+    override def compare(that: VersionVector): Int = ???
+}
+case class UpdateWrites(writes: Seq[Write]) extends AntiEntropyMsg
