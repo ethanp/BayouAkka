@@ -95,9 +95,7 @@ class Master extends Actor with ActorLogging {
     def broadcastServers(msg: Msg) = broadcast(servers map (_._1)) _
     def broadcastClients(msg: Msg) = broadcast(clients map (_._1)) _
     def broadcast(who: Iterable[Member])(msg: Msg) =
-        members foreach { case (i,m) ⇒ refFromMember(m) ! msg}
-
-    def firstFreeID(set: Set[NodeID]) = (Stream from 0 filterNot (set contains)) head
+        members foreach { case (i,m) ⇒ refFromMember(m) ! msg }
 
     override def receive : Actor.Receive = {
 

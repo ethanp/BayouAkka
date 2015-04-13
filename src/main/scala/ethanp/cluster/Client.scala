@@ -18,6 +18,8 @@ class Client extends Actor with ActorLogging {
       server = Common.getSelection(path, context)
       server ! ClientConnected
 
+    case s @ Song(name, url) ⇒ println(s.str)
+
     case m ⇒ log.error(s"client received non-client command: $m")
   }
 }
