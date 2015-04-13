@@ -21,6 +21,6 @@ class Server extends Actor with ActorLogging {
 }
 
 object Server {
-    def main(args: Array[String]) =
+    def main(args: Array[String]): Unit =
         (Common joinClusterAs "server").actorOf(Props[Server], name = "server")
 }

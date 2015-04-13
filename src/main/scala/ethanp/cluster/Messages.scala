@@ -6,21 +6,23 @@ import akka.actor.ActorPath
  * Ethan Petuchowski
  * 4/9/15
  */
-sealed trait ClientCommand
-sealed trait ServerCommand
-sealed case class MasterMsg()
-case class  RetireServer(id: Int)                   extends MasterMsg with ServerCommand
-case class  BreakConnection(id1: Int, id2: Int)     extends MasterMsg with ServerCommand
-case class  RestoreConnection(id1: Int, id2: Int)   extends MasterMsg with ServerCommand
-case object Pause                                   extends MasterMsg with ServerCommand
-case object Start                                   extends MasterMsg with ServerCommand
-case object Stabilize                               extends MasterMsg with ServerCommand
-case class  PrintLog(id: Int)                       extends MasterMsg with ServerCommand
-case class  Put(clientID: Int, songName: String, url: String) extends MasterMsg with ClientCommand
-case class  Get(clientID: Int, songName: String)    extends MasterMsg with ClientCommand
-case class  Delete(clientID: Int, songName: String) extends MasterMsg with ClientCommand
+sealed class Msg()
+sealed trait MasterMsg extends Msg
+class Forward(val i: Int) extends MasterMsg
+object Forward { def unapply(fwd: Forward): Option[Int] = Some(fwd.i) }
+trait BrdcstServers extends MasterMsg
+case class  RetireServer(id: Int)                   extends Forward(id)
+case class  BreakConnection(id1: Int, id2: Int)     extends Forward(id1)
+case class  RestoreConnection(id1: Int, id2: Int)   extends Forward(id1)
+case class  PrintLog(id: Int)                       extends Forward(id)
+case class  NodeID(id: Int)                         extends Forward(id) with Administrativa
+case class  Put(clientID: Int, songName: String, url: String) extends Forward(clientID)
+case class  Get(clientID: Int, songName: String)    extends Forward(clientID)
+case class  Delete(clientID: Int, songName: String) extends Forward(clientID)
+case object Pause                                   extends BrdcstServers
+case object Start                                   extends BrdcstServers
+case object Stabilize                               extends BrdcstServers
 
-sealed case class Administrativa()
-case class  NodeID(id: Int)                         extends Administrativa with ServerCommand
-case class  ServerPath(path: ActorPath)             extends Administrativa with ClientCommand
-case object ClientConnected                         extends Administrativa with ServerCommand
+sealed trait Administrativa extends Msg
+case class  ServerPath(path: ActorPath)             extends Administrativa
+case object ClientConnected                         extends Administrativa

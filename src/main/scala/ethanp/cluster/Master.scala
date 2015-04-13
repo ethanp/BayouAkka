@@ -1,13 +1,13 @@
 package ethanp.cluster
 
-import java.lang.System.err
 import java.util.Scanner
 
 import akka.actor._
+import akka.cluster.{Member, Cluster}
 import akka.cluster.ClusterEvent._
 import akka.cluster.MemberStatus.Up
-import akka.cluster.{Cluster, Member}
-import ethanp.cluster.Common.{getPath, getSelection}
+import Common.{getPath, getSelection}
+import System.err
 
 import scala.sys.process._
 
@@ -24,12 +24,19 @@ object Master extends App {
 
     def createClientProc() = s"sbt execClient".run()
     def createServerProc() = s"sbt execServer".run()
-    def createClient() = Client.main(Array.empty)
-    def createServer() = Server.main(Array.empty)
 
-    private val system = Common.joinClusterAs("2551", "master")
+    def createClient(cid: Int, sid: Int) = {
+        clientID = cid
+        serverID = sid
+        Client.main(Array.empty)
+    }
+    def createServer(sid: Int) = {
+        serverID = sid
+        Server.main(Array.empty)
+    }
+
     /* make the master the first seed node */
-    val clusterKing = system.actorOf(Props[Master], name = "master")
+    val clusterKing = Common.joinClusterAs("2551", "master").actorOf(Props[Master], name = "master")
 
     @volatile var clientID = -1
     @volatile var serverID = -1
@@ -45,49 +52,23 @@ object Master extends App {
     def handle(str: String) {
         val brkStr = str split " "
         println(s"handling { $str }")
+        val b1 = if (brkStr.length > 1) brkStr(1) else ""
+        val b2 = if (brkStr.length > 2) brkStr(2) else ""
+        def b1i = b1.toInt
+        def b2i = b2.toInt
         brkStr head match {
-            case "joinServer" ⇒
-                serverID = brkStr(1).toInt
-                createServer()
-
-            case "joinClient" ⇒
-                clientID = brkStr(1).toInt // the client's ID is ONLY relevant to the Master
-                serverID = brkStr(2).toInt
-                createClient()
-
-            case "retireServer" ⇒
-                clusterKing ! RetireServer(id = brkStr(1).toInt)
-
-            case "breakConnection" ⇒
-                val id1 = brkStr(1).toInt
-                val id2 = brkStr(2).toInt
-                clusterKing ! BreakConnection(id1 = brkStr(1).toInt, id2 = brkStr(2).toInt)
-
-            case "restoreConnection" ⇒
-                clusterKing ! RestoreConnection(id1 = brkStr(1).toInt, id2 = brkStr(2).toInt)
-
-            case "pause" ⇒
-                clusterKing ! Pause
-
-            case "start" ⇒
-                clusterKing ! Start
-
-            case "stabilize" ⇒
-                clusterKing ! Stabilize
-
-            case "printLog" ⇒
-                clusterKing ! PrintLog(id = brkStr(1).toInt)
-
-            case "put" ⇒
-                clusterKing ! Put(clientID = brkStr(1).toInt,
-                                  songName = brkStr(2),
-                                  url      = brkStr(3))
-
-            case "get" ⇒
-                clusterKing ! Get(clientID = brkStr(1).toInt, songName = brkStr(2))
-
-            case "delete" ⇒
-                clusterKing ! Delete(clientID = brkStr(1).toInt, songName = brkStr(2))
+            case "joinServer"           ⇒ createServer(b1i)
+            case "joinClient"           ⇒ createClient(b1i, b2i)
+            case "retireServer"         ⇒ clusterKing ! RetireServer(id = b1i)
+            case "breakConnection"      ⇒ clusterKing ! BreakConnection(id1 = b1i, id2 = b2i)
+            case "restoreConnection"    ⇒ clusterKing ! RestoreConnection(id1 = b1i, id2 = b2i)
+            case "pause"                ⇒ clusterKing ! Pause
+            case "start"                ⇒ clusterKing ! Start
+            case "stabilize"            ⇒ clusterKing ! Stabilize
+            case "printLog"             ⇒ clusterKing ! PrintLog(id = b1i)
+            case "get"                  ⇒ clusterKing ! Get(clientID = b1i, songName = b2)
+            case "delete"               ⇒ clusterKing ! Delete(clientID = b1i, songName = b2)
+            case "put"                  ⇒ clusterKing ! Put(clientID = b1i, songName = b2, url = brkStr(3))
         }
     }
 }
@@ -100,72 +81,42 @@ class Master extends Actor with ActorLogging {
      *     become a part of the Cluster OF Actor Systems!
      */
     val cluster = Cluster(context.system)
-
-    override def preStart(): Unit = cluster.subscribe(self,
-                    classOf[MemberUp], classOf[MemberRemoved])
-
+    override def preStart(): Unit = cluster.subscribe(self, classOf[MemberUp], classOf[MemberRemoved])
     override def postStop(): Unit = cluster unsubscribe self
 
     var members = Map.empty[Int, Member]
 
+    def servers = members collect { case (k, v) if v.roles.head == "server" ⇒ v }
+    def clients = members collect { case (k, v) if v.roles.head == "client" ⇒ v }
     def refFromMember(m: Member) = getSelection(getPath(m), context)
     def getMember(id: Int) = refFromMember(members(id))
 
+    def broadcastServers(msg: Msg) = broadcast(servers) _
+    def broadcastClients(msg: Msg) = broadcast(clients) _
+    def broadcast(who: Iterable[Member])(msg: Msg) = members
+
     def firstFreeID(set: Set[Int]) = (Stream from 0 filterNot (set contains)) head
 
-    override def receive = {
+    override def receive : Actor.Receive = {
 
-        case m: MasterMsg ⇒ m match {
-            case RetireServer(id) =>
-                getMember(id) forward m
+        // always sent as 1st msg upon joining the cluster
+        case state: CurrentClusterState => state.members filter (_.status == Up) foreach identity
 
-            case BreakConnection(id1, id2) =>
-                getMember(id1) forward m
-                getMember(id2) forward m
+        /* CLI Events */
+        case m@Forward(id) ⇒ getMember(id) forward m
+        case m: BrdcstServers ⇒ broadcastServers(m)
 
-            case RestoreConnection(id1, id2) =>
-
-            case Pause =>
-
-            case Start =>
-
-            case Stabilize =>
-
-            case PrintLog(id) =>
-
-            case Put(clientID, songName, url) =>
-
-            case Get(clientID, songName) =>
-
-            case Delete(clientID, songName) =>
-        }
-
-        case m: Administrativa ⇒ m match {
-            case ServerPath(actorPath) =>
-            case ClientConnected =>
-        }
-
-        // Note: this may not work properly anymore but I don't think it matters
-        case state: CurrentClusterState => state.members filter (_.status == Up) foreach newMember
-
-        case MemberUp(m) => newMember(m)
-
-        /* member has been removed from the cluster
-         * time it takes to go from "unreachable" to "down" (and therefore removed)
-         * is configured by e.g. "auto-down-unreachable-after = 1s"     */
-        case MemberRemoved(m, prevStatus) ⇒ remove(m)
-    }
-
-    def newMember(m: Member): Unit = {
-        m.roles.head match {
+        /* Cluster Events */
+        case MemberUp(m) =>
+              m.roles.head match {
             case "client" ⇒
                 val cid: Int = Master.clientID
                 val sid: Int = Master.serverID
 
-                if (cid == -1) { err println "cid hasn't been set"; return }
-                if (sid == -1) { err println "sid hasn't been set"; return }
-                if (members contains cid) { err println s"Node $cid already exists"; return }
-                if (!(members contains sid)) { err println s"Node $sid doesn't exist"; return }
+                if (cid == -1) { err println "cid hasn't been set"; return null }
+                if (sid == -1) { err println "sid hasn't been set"; return null }
+                if (members contains cid) { err println s"Node $cid already exists"; return null }
+                if (!(members contains sid)) { err println s"Node $sid doesn't exist"; return null }
 
                 members += (cid → m)  // save reference to this member
 
@@ -176,8 +127,8 @@ class Master extends Actor with ActorLogging {
             case "server" ⇒
                 val sid: Int = Master.serverID
 
-                if (sid == -1) { err println "sid hasn't been set"; return }
-                if (members contains sid) { err println s"Node $sid already exists"; return }
+                if (sid == -1) { err println "sid hasn't been set"; return null }
+                if (members contains sid) { err println s"Node $sid already exists"; return null }
 
                 members += (sid → m)  // save reference to this member
 
@@ -186,7 +137,10 @@ class Master extends Actor with ActorLogging {
 
             case "master" ⇒ log info "ignoring Master MemberUp"
         }
+//
+        /* member has been removed from the cluster
+         * time it takes to go from "unreachable" to "down" (and therefore removed)
+         * is configured by e.g. "auto-down-unreachable-after = 1s"     */
+        case MemberRemoved(m, prevStatus) ⇒ members = members filterNot { case (k, v) ⇒ m == v }
     }
-
-    def remove(m: Member) { members = members filterNot { case (k, v) ⇒ m == v } }
 }
