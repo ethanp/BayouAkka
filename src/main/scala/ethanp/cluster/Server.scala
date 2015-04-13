@@ -1,7 +1,7 @@
 package ethanp.cluster
 
 import akka.actor._
-import ethanp.cluster.Common.{URL, LCValue, NodeID, getSelection}
+import ethanp.cluster.Common._
 
 /**
  * Ethan Petuchowski
@@ -18,8 +18,8 @@ class Server extends Actor with ActorLogging {
     // server is responsible for informing of updates
     var clients = Set.empty[ActorRef]
 
-    var connectedServers = Map.empty[ActorSelection, NodeID]
-    var knownServers = Map.empty[ActorSelection, NodeID]
+    var connectedServers = Map.empty[NodeID, ActorSelection]
+    var knownServers = Map.empty[NodeID, ActorSelection]
     var writeLog = collection.mutable.SortedSet.empty[Write]
     var databaseState = Map.empty[String, URL]
     def getSong(songName: String) = Song(songName, databaseState(songName))
@@ -31,12 +31,22 @@ class Server extends Actor with ActorLogging {
         Timestamp(logicalClock, serverName)
     }
 
-    def addToWriteLog(action: Action) = {
+    def appendAndSync(action: Action) = {
+        // append
         writeLog += Write(Common.INF, nextTimestamp, action)
+
+        // sync
+        antiEntropizeAll
     }
 
-    def antiEntropize = {
-
+    /**
+     * Initiates anti-entropy sessions with all `connectedServers`
+     * Called after writing to the `writeLog`
+     */
+    def antiEntropizeAll = {
+        for (server ← connectedServers.values) {
+            antiEntropizeWith(server)
+        }
     }
 
     def receive = {
@@ -45,29 +55,27 @@ class Server extends Actor with ActorLogging {
             case RetireServer(id) ⇒
 
 
-            case BreakConnection(id1, id2) ⇒
-                connectedServers = connectedServers filter { case (k, v) ⇒ v != id2 }
+            case BreakConnection(id1, id2) ⇒ connectedServers -= id2
 
-            case RestoreConnection(id1, id2) ⇒
-                connectedServers += (knownServers find { case (k, v) ⇒ v == id2 }).get
+            case RestoreConnection(id1, id2) ⇒ connectedServers += (id2 → knownServers(id2))
 
             case PrintLog(id) ⇒ writeLog.foreach(w ⇒ println(w.str))
             case IDMsg(id) ⇒ nodeID = id
 
-            case p @ Put(clientID, songName, url) => addToWriteLog(p)
-            case d @ Delete(clientID, songName) => addToWriteLog(d)
+            case p @ Put(clientID, songName, url) => appendAndSync(p)
+            case d @ Delete(clientID, songName) => appendAndSync(d)
 
-            // TODO should return ERR_DEP when necessary
+            // TODO should return ERR_DEP when necessary (not sure when that IS yet)
             case Get(clientID, songName) => sender ! getSong(songName)
             case _ => log error s"server wasn't expecting msg $m"
         }
-        case Servers(servers: Map[ActorPath, NodeID]) ⇒ addServers(servers)
+        case Servers(servers: Map[NodeID, ActorPath]) ⇒ addServers(servers)
         case ClientConnected ⇒ clients += sender
     }
 
-    def addServers(servers: Map[ActorPath, NodeID]) {
-        servers foreach { case (k, v) ⇒
-            connectedServers += (getSelection(k, context) → v)
+    def addServers(servers: Map[NodeID, ActorPath]) {
+        servers foreach { case (id, path) ⇒
+            connectedServers += (id → getSelection(path, context))
         }
         knownServers ++= connectedServers
     }

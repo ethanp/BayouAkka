@@ -1,13 +1,13 @@
 package ethanp.cluster
 
+import java.lang.System.err
 import java.util.Scanner
 
 import akka.actor._
-import akka.cluster.{Member, Cluster}
 import akka.cluster.ClusterEvent._
 import akka.cluster.MemberStatus.Up
-import ethanp.cluster.Common.{NodeID, getPath, getSelection}
-import System.err
+import akka.cluster.{Cluster, Member}
+import ethanp.cluster.Common._
 
 import scala.sys.process._
 
@@ -49,7 +49,8 @@ object Master extends App {
         }
     }
 
-    def handle(str: String) {
+    // TODO maybe I could make this blocking by having it return a Future or a Promise
+    def handle(str: String): Unit = {
         val brkStr = str split " "
         println(s"handling { $str }")
         val b1 = if (brkStr.length > 1) brkStr(1) else ""
@@ -70,6 +71,7 @@ object Master extends App {
             case "delete"               ⇒ clusterKing ! Delete(clientID = b1i, songName = b2)
             case "put"                  ⇒ clusterKing ! Put(clientID = b1i, songName = b2, url = brkStr(3))
         }
+
     }
 }
 
@@ -86,15 +88,17 @@ class Master extends Actor with ActorLogging {
 
     var members = Map.empty[NodeID, Member]
 
-    def servers: Map[Member, NodeID] = members collect { case (k, v) if v.roles.head == "server" ⇒ v → k }
-    def clients: Map[Member, NodeID] = members collect { case (k, v) if v.roles.head == "client" ⇒ v → k }
-    def refFromMember(m: Member) = getSelection(getPath(m), context)
-    def getMember(id: NodeID) = refFromMember(members(id))
+    def servers: Map[NodeID, Member] = members collect { case (k, v) if v.roles.head == "server" ⇒ k → v }
+    def clients: Map[NodeID, Member] = members collect { case (k, v) if v.roles.head == "client" ⇒ k → v }
+    def refFromMember(m: Member): ActorSelection = getSelection(getPath(m), context)
+    def getMember(id: NodeID): ActorSelection = refFromMember(members(id))
 
-    def serverPaths = servers map { case (mem, i) ⇒ getPath(mem) → i }
-    def broadcastServers(msg: Msg) = broadcast(servers map (_._1)) _
-    def broadcastClients(msg: Msg) = broadcast(clients map (_._1)) _
-    def broadcast(who: Iterable[Member])(msg: Msg) =
+    def serverPaths: Map[NodeID, ActorPath] = servers map { case (i, mem) ⇒ i → getPath(mem) }
+
+    def broadcastServers(msg: Msg): (Msg) ⇒ Unit = broadcast(servers values)
+    def broadcastClients(msg: Msg): (Msg) ⇒ Unit = broadcast(clients values)
+
+    def broadcast(who: Iterable[Member])(msg: Msg): Unit =
         members foreach { case (i,m) ⇒ refFromMember(m) ! msg }
 
     override def receive : Actor.Receive = {
@@ -104,6 +108,7 @@ class Master extends Actor with ActorLogging {
 
         /* CLI Events */
         case m @ Forward(id) ⇒ getMember(id) forward m
+        case m @ Forward2(id1, id2) ⇒ Seq(id1, id2) foreach (getMember(_) forward m)
         case m: BrdcstServers ⇒ broadcastServers(m)
 
         /* Cluster Events */

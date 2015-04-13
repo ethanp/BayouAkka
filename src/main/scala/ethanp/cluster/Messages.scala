@@ -14,12 +14,16 @@ sealed trait MasterMsg extends Msg
 sealed trait Action {
     def str: String
 }
+
 class Forward(val i: NodeID) extends MasterMsg
+class Forward2(val i: NodeID, val j: NodeID) extends MasterMsg
 object Forward { def unapply(fwd: Forward): Option[NodeID] = Some(fwd.i) }
+object Forward2 { def unapply(fwd: Forward2): Option[(NodeID, NodeID)] = Some(fwd.i, fwd.j) }
+
 trait BrdcstServers extends MasterMsg
 case class  RetireServer(id: NodeID)                    extends Forward(id)
-case class  BreakConnection(id1: NodeID, id2: NodeID)   extends Forward(id1)
-case class  RestoreConnection(id1: NodeID, id2: NodeID) extends Forward(id1)
+case class  BreakConnection(id1: NodeID, id2: NodeID)   extends Forward2(id1, id2)
+case class  RestoreConnection(id1: NodeID, id2: NodeID) extends Forward2(id1, id2)
 case class  PrintLog(id: NodeID)                        extends Forward(id)
 case class  IDMsg(id: NodeID)                           extends Forward(id) with Administrativa
 
@@ -40,7 +44,7 @@ case object Stabilize                                   extends BrdcstServers
 
 sealed trait Administrativa extends Msg
 case class  ServerPath(path: ActorPath)                 extends Administrativa
-case class  Servers(servers: Map[ActorPath, NodeID])    extends Administrativa
+case class  Servers(servers: Map[NodeID, ActorPath])    extends Administrativa
 case object ClientConnected                             extends Administrativa
 
 case class Write(acceptStamp: LCValue, timestamp: Timestamp, action: Action) extends Ordered[Write] {
