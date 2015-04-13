@@ -90,12 +90,14 @@ And it goes a little-something like-a this:
 
 
 #### Server Join
-1. "Servers should follow the **recursive naming** procedure from the 2nd paper"
+1. "Servers should follow the **recursive naming** procedure from the 2nd
+   paper"
 
 #### Retirement
 
 ### Primary Replica & Commitment
-1. "Must be the first server in the system and upon retiring should hand off its duties to **the server** it informs of its retirement."
+1. "Must be the first server in the system and upon retiring should hand off
+   its duties to **the server** it informs of its retirement."
 
 
 ## Client (Actor)
@@ -104,21 +106,35 @@ And it goes a little-something like-a this:
 # Processes Overview
 
 ## joinClient (clientID, serverID)
+
+**Done**
+
 1. The CLI calls `joinClient(c,s)` on Master
-2. Master calls Client.main(Array.empty)
+2. Master calls `Client.main(Array.empty)`
 3. Master sends `ClusterKing` a `case class JoinClient(clientID, serverID)`
 4. The `ClusterKing` stores the pair in a `var` or whatever
 5. The `object Client` creates a `class Client Actor` who joins the Cluster
 6. The `ClusterKing` receives the `MemberUp(m)` notification
-7. It retrieves the saved id-pair, and saves the `Client`'s `ActorPath` in a field `nodes: Map[PID, ActorPath]`
-8. It does `clientRef ! ConnectToPath(nodes(serverID))`
-9. The `Client` stores the server path in a similar `servers: Map[PID, ActorPath]`
-
+7. It retrieves the saved id-pair
+8. It saves the `Client`'s `ActorPath` in a field `nodes: Map[PID, ActorPath]`
+9. It does `clientRef ! ConnectToPath(nodes(serverID))`
+10. The `Client` stores the server in `server`
 
 ## joinServer(id)
+**Done**
 
 ## Put Song
-1. The `Client` does `servers.head._2 ! Put(song)`
+1. The `Client` does `server ! Put(song)`
+2. The `Server` increments its Logical Clock
+3. It appends the `Write(currentTimestamp, song)` to its `writeLog`
+4. **TODO** does it execute right now?
 
-### Program Termination
+## Program Termination
 Since there's just a single JVM, I can just call `System exit 0`
+
+## Retire Server
+1. `Master Actor` receives `RetireServer(id)` from `object Master`
+2. It forwards it to the appropriate server
+3. The server calls `retire()`
+4. It writes the retire entry
+5. It initiates a Anti-Entropy with 

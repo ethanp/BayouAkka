@@ -27,8 +27,9 @@ object Master extends App {
     def createClient() = Client.main(Array.empty)
     def createServer() = Server.main(Array.empty)
 
+    private val system = Common.joinClusterAs("2551", "master")
     /* make the master the first seed node */
-    val clusterKing = Common.clusterSystem("2551", "master").actorOf(Props[Master], name = "master")
+    val clusterKing = system.actorOf(Props[Master], name = "master")
 
     @volatile var clientID = -1
     @volatile var serverID = -1
@@ -36,24 +37,57 @@ object Master extends App {
     /* THE COMMAND LINE INTERFACE */
     val sc = new Scanner(System.in)
     new Thread {
-        while (sc.hasNextLine) {
-            val str = sc.nextLine
-            val brkStr = str split " "
-            println(s"handling { $str }")
-            brkStr.head match {
-                case "joinServer" ⇒
-                    serverID = brkStr(1).toInt
-                    createServer()
+        while (sc hasNextLine) {
+            handle(sc nextLine)
+        }
+    }
 
-                case "joinClient" ⇒
-                    clientID = brkStr(1).toInt // the client's ID is ONLY relevant to the Master
-                    serverID = brkStr(2).toInt
-                    createClient()
+    def handle(str: String) {
+        val brkStr = str split " "
+        println(s"handling { $str }")
+        brkStr head match {
+            case "joinServer" ⇒
+                serverID = brkStr(1).toInt
+                createServer()
 
-                case "start" ⇒
+            case "joinClient" ⇒
+                clientID = brkStr(1).toInt // the client's ID is ONLY relevant to the Master
+                serverID = brkStr(2).toInt
+                createClient()
 
-                case "sendMessage" ⇒
-            }
+            case "retireServer" ⇒
+                clusterKing ! RetireServer(id = brkStr(1).toInt)
+
+            case "breakConnection" ⇒
+                val id1 = brkStr(1).toInt
+                val id2 = brkStr(2).toInt
+                clusterKing ! BreakConnection(id1 = brkStr(1).toInt, id2 = brkStr(2).toInt)
+
+            case "restoreConnection" ⇒
+                clusterKing ! RestoreConnection(id1 = brkStr(1).toInt, id2 = brkStr(2).toInt)
+
+            case "pause" ⇒
+                clusterKing ! Pause
+
+            case "start" ⇒
+                clusterKing ! Start
+
+            case "stabilize" ⇒
+                clusterKing ! Stabilize
+
+            case "printLog" ⇒
+                clusterKing ! PrintLog(id = brkStr(1).toInt)
+
+            case "put" ⇒
+                clusterKing ! Put(clientID = brkStr(1).toInt,
+                                  songName = brkStr(2),
+                                  url      = brkStr(3))
+
+            case "get" ⇒
+                clusterKing ! Get(clientID = brkStr(1).toInt, songName = brkStr(2))
+
+            case "delete" ⇒
+                clusterKing ! Delete(clientID = brkStr(1).toInt, songName = brkStr(2))
         }
     }
 }
@@ -68,15 +102,48 @@ class Master extends Actor with ActorLogging {
     val cluster = Cluster(context.system)
 
     override def preStart(): Unit = cluster.subscribe(self,
-                 classOf[MemberUp], classOf[MemberRemoved])
+                    classOf[MemberUp], classOf[MemberRemoved])
 
-    override def postStop(): Unit = cluster.unsubscribe(self)
+    override def postStop(): Unit = cluster unsubscribe self
 
     var members = Map.empty[Int, Member]
+
+    def refFromMember(m: Member) = getSelection(getPath(m), context)
+    def getMember(id: Int) = refFromMember(members(id))
 
     def firstFreeID(set: Set[Int]) = (Stream from 0 filterNot (set contains)) head
 
     override def receive = {
+
+        case m: MasterMsg ⇒ m match {
+            case RetireServer(id) =>
+                getMember(id) forward m
+
+            case BreakConnection(id1, id2) =>
+                getMember(id1) forward m
+                getMember(id2) forward m
+
+            case RestoreConnection(id1, id2) =>
+
+            case Pause =>
+
+            case Start =>
+
+            case Stabilize =>
+
+            case PrintLog(id) =>
+
+            case Put(clientID, songName, url) =>
+
+            case Get(clientID, songName) =>
+
+            case Delete(clientID, songName) =>
+        }
+
+        case m: Administrativa ⇒ m match {
+            case ServerPath(actorPath) =>
+            case ClientConnected =>
+        }
 
         // Note: this may not work properly anymore but I don't think it matters
         case state: CurrentClusterState => state.members filter (_.status == Up) foreach newMember
@@ -103,7 +170,8 @@ class Master extends Actor with ActorLogging {
                 members += (cid → m)  // save reference to this member
 
                 // tell the client the server it is supposed to connect to
-                getSelection(getPath(m), context) ! ServerPath(getPath(members(Master.serverID)))
+                val client = refFromMember(m)
+                client ! ServerPath(getPath(members(Master.serverID)))
 
             case "server" ⇒
                 val sid: Int = Master.serverID
@@ -113,7 +181,10 @@ class Master extends Actor with ActorLogging {
 
                 members += (sid → m)  // save reference to this member
 
-            case "master" ⇒ log.info("ignoring Master MemberUp")
+                val server = refFromMember(m)
+                server ! NodeID(sid)
+
+            case "master" ⇒ log info "ignoring Master MemberUp"
         }
     }
 

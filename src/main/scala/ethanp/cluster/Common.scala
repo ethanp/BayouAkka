@@ -9,8 +9,8 @@ import com.typesafe.config.ConfigFactory
  * 4/10/15
  */
 object Common {
-    def clusterSystem(role: String): ActorSystem = Common.clusterSystem("0", role)
-    def clusterSystem(port: String, role: String) = {
+    def joinClusterAs(role: String): ActorSystem = Common.joinClusterAs("0", role)
+    def joinClusterAs(port: String, role: String) = {
         val config = ConfigFactory.parseString(s"akka.remote.netty.tcp.port=$port").
           withFallback(ConfigFactory.parseString(s"akka.cluster.roles = [$role]")).
           withFallback(ConfigFactory.load())
