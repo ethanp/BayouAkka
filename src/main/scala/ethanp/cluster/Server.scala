@@ -49,16 +49,10 @@ class Server extends Actor with ActorLogging {
     def deal(w: Forward2, f: NodeID ⇒ Unit): Unit = if (w.i == nodeID) f(w.j) else f(w.i)
 
     /**
-     * only updates after the given `versionVector` will be returned
+     * only updates strictly after the given `versionVector` will be returned
      */
-    def findUpdatesGiven(versionVector: VersionVector): UpdateWrites = {
-        UpdateWrites {
-            for {
-                write ← writeLog.toSeq
-                e ← versionVector isBefore write
-            } yield e
-        }
-    }
+    def findUpdatesGiven(versionVector: VersionVector): UpdateWrites =
+        UpdateWrites (writeLog filter (versionVector isNotSince))
 
     def updateLog(writes: Seq[Write]): Unit = {
         ???

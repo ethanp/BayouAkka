@@ -3,6 +3,8 @@ package ethanp.cluster
 import akka.actor.ActorPath
 import ethanp.cluster.Common.{INF, LCValue, NodeID, URL}
 
+import scala.collection.SortedSet
+
 /**
  * Ethan Petuchowski
  * 4/9/15
@@ -53,8 +55,12 @@ case class Write(acceptStamp: LCValue, timestamp: Timestamp, action: Action) ext
 }
 case class Timestamp(lcVal: LCValue, acceptor: ServerName) extends Ordered[Timestamp] {
     override def compare(that: Timestamp): Int =
-        if (lcVal != that.lcVal) lcVal compare that.lcVal
-        else acceptor compare that.acceptor
+        if (lcVal != that.lcVal) {
+            lcVal compare that.lcVal
+        }
+        else {
+            acceptor compare that.acceptor
+        }
 }
 case class ServerName(name: String) extends Ordered[ServerName] {
     // I think any (associative, commutative, reflexive, transitive) comparison is probably fine
@@ -63,15 +69,12 @@ case class ServerName(name: String) extends Ordered[ServerName] {
 
 sealed trait AntiEntropyMsg
 case object LemmeUpgradeU extends AntiEntropyMsg
-case class VersionVector(m: Map[ServerName, LCValue] = Map.empty[ServerName, LCValue])
+case class VersionVector(vectorMap: Map[ServerName, LCValue] = Map.empty[ServerName, LCValue])
         extends Ordered[VersionVector] with AntiEntropyMsg {
-    def knowsAbout(name: ServerName) = m contains name
+    def knowsAbout(name: ServerName) = vectorMap contains name
     override def compare(that: VersionVector): Int = ??? // oh snap I know this one
-    def isBefore(write: Write): Option[Write] =
-        timestampFor(write.timestamp.acceptor) collect {
-            case ts if ts < write.timestamp ⇒ write
-        }
-    def timestampFor(acceptor: ServerName): Option[Timestamp] =
-        m.get(acceptor).map(Timestamp(_, acceptor))
+    def isNotSince(write: Write): Boolean =
+        (vectorMap contains write.timestamp.acceptor) &&
+                (write.timestamp.lcVal > vectorMap(write.timestamp.acceptor))
 }
-case class UpdateWrites(writes: Seq[Write]) extends AntiEntropyMsg
+case class UpdateWrites(writes: SortedSet[Write]) extends AntiEntropyMsg
