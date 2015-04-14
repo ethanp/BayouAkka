@@ -65,6 +65,13 @@ sealed trait AntiEntropyMsg
 case object LemmeUpgradeU extends AntiEntropyMsg
 case class VersionVector(m: Map[ServerName, LCValue] = Map.empty[ServerName, LCValue])
         extends Ordered[VersionVector] with AntiEntropyMsg {
-    override def compare(that: VersionVector): Int = ???
+    def knowsAbout(name: ServerName) = m contains name
+    override def compare(that: VersionVector): Int = ??? // oh snap I know this one
+    def isBefore(write: Write): Option[Write] =
+        timestampFor(write.timestamp.acceptor) collect {
+            case ts if ts < write.timestamp ⇒ write
+        }
+    def timestampFor(acceptor: ServerName): Option[Timestamp] =
+        m.get(acceptor).map(Timestamp(_, acceptor))
 }
 case class UpdateWrites(writes: Seq[Write]) extends AntiEntropyMsg

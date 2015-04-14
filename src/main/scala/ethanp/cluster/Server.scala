@@ -48,8 +48,16 @@ class Server extends Actor with ActorLogging {
 
     def deal(w: Forward2, f: NodeID ⇒ Unit): Unit = if (w.i == nodeID) f(w.j) else f(w.i)
 
+    /**
+     * only updates after the given `versionVector` will be returned
+     */
     def findUpdatesGiven(versionVector: VersionVector): UpdateWrites = {
-        ???
+        UpdateWrites {
+            for {
+                write ← writeLog.toSeq
+                e ← versionVector isBefore write
+            } yield e
+        }
     }
 
     def updateLog(writes: Seq[Write]): Unit = {
@@ -67,8 +75,8 @@ class Server extends Actor with ActorLogging {
             case PrintLog(id) ⇒ writeLog.foreach(w ⇒ println(w.str))
             case IDMsg(id) ⇒ nodeID = id
 
-            case p @ Put(clientID, songName, url) => appendAndSync(p)
-            case d @ Delete(clientID, songName) => appendAndSync(d)
+            case p @ Put(clientID, songName, url) ⇒ appendAndSync(p)
+            case d @ Delete(clientID, songName)   ⇒ appendAndSync(d)
 
             // TODO should return ERR_DEP when necessary (not sure when that IS yet)
             case Get(clientID, songName) => sender ! getSong(songName)
@@ -85,9 +93,9 @@ class Server extends Actor with ActorLogging {
         // theoretically, this should happen in a child-actor
         //  -- "each actor should only do one thing"
         case m: AntiEntropyMsg ⇒ m match {
-            case LemmeUpgradeU ⇒ sender ! myVersionVector
-            case vv: VersionVector ⇒ sender ! findUpdatesGiven(vv)
-            case UpdateWrites(writes) ⇒ updateLog(writes)
+            case LemmeUpgradeU          ⇒ sender ! myVersionVector
+            case vv: VersionVector      ⇒ sender ! findUpdatesGiven(vv)
+            case UpdateWrites(writes)   ⇒ updateLog(writes)
         }
     }
 
