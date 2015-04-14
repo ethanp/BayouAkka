@@ -1,5 +1,5 @@
 # TODO List
-1. Anti-Entropy session implementation
+1. Am I supposed to do prefix pruning and snapshot xfers?
 2. Automated in-IDE test cases for given tests
     * At least 1 of them should assert proper resulting state as well 
 3. `Master.handle(String)` should block until it satisfies the spec

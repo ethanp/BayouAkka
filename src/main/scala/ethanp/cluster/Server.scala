@@ -3,6 +3,9 @@ package ethanp.cluster
 import akka.actor._
 import ethanp.cluster.Common._
 
+import scala.collection.SortedSet
+
+
 /**
  * Ethan Petuchowski
  * 4/9/15
@@ -11,24 +14,26 @@ import ethanp.cluster.Common._
  */
 class Server extends Actor with ActorLogging {
 
+    var logicalClock: LCValue = 0
+    var myVersionVector: VersionVector = _ // TODO still need join protocol where this is assigned
     var isPrimary: Boolean = false
-
     var nodeID: NodeID = _
     var serverName: ServerName = _
+    var csn: LCValue = 0
 
-    // I'm supposing these are the clients for whom this
-    // server is responsible for informing of updates
-    var clients = Set.empty[ActorRef]
-
+    var clients          = Set.empty[ActorRef]
+    var writeLog         = SortedSet.empty[Write]
+    var databaseState    = Map.empty[String, URL]
     var connectedServers = Map.empty[NodeID, ActorSelection]
-    var knownServers = Map.empty[NodeID, ActorSelection]
-    var writeLog = collection.mutable.SortedSet.empty[Write]
-    var databaseState = Map.empty[String, URL]
+    var knownServers     = Map.empty[NodeID, ActorSelection]
+
     def getSong(songName: String) = Song(songName, databaseState(songName))
+    def makeWrite(action: Action) = Write(INF, nextTimestamp, action)
 
-    var logicalClock: LCValue = 0
-
-    var myVersionVector: VersionVector = _
+    def nextCSN = {
+        csn += 1
+        csn
+    }
 
     def nextTimestamp = {
         logicalClock += 1
@@ -36,8 +41,8 @@ class Server extends Actor with ActorLogging {
     }
 
     def appendAndSync(action: Action) = {
-        writeLog += Write(Common.INF, nextTimestamp, action)    // append
-        antiEntropizeAll()                                      // sync
+        writeLog += makeWrite(action)    // append
+        antiEntropizeAll()               // sync
     }
 
     /**
@@ -46,25 +51,34 @@ class Server extends Actor with ActorLogging {
      */
     def antiEntropizeAll(): Unit = connectedServers.values foreach (_ ! LemmeUpgradeU)
 
-    def deal(w: Forward2, f: NodeID ⇒ Unit): Unit = if (w.i == nodeID) f(w.j) else f(w.i)
+    /**
+     * Apply `f` to the node specified in the `Forward2` who is not me
+     */
+    def otherID[T](w: Forward2, f: NodeID ⇒ T): T = if (w.i == nodeID) f(w.j) else f(w.i)
 
     /**
-     * only updates strictly after the given `versionVector` will be returned
+     * @return all updates strictly after the given `versionVector` and commits since CSN
      */
-    def findUpdatesGiven(versionVector: VersionVector): UpdateWrites =
-        UpdateWrites (writeLog filter (versionVector isNotSince))
-
-    def updateLog(writes: Seq[Write]): Unit = {
-        ???
-    }
+    def allWritesSince(vec: VersionVector, commitNo: LCValue): UpdateWrites =
+        UpdateWrites(writeLog filter (w ⇒ (vec isNotSince w.timestamp) || w.acceptStamp > commitNo))
 
     def receive = {
+
+        // TODO it could be that the sender() is a Server I've never seen before
+
         case m: Forward ⇒ m match {
 
             case RetireServer(id) ⇒
                 if (isPrimary) {
                     // TODO find another primary
                 }
+                // append a retirement-write
+                writeLog += makeWrite(Retirement(serverName))
+
+                // TODO tell someone else of my retirement
+                connectedServers
+
+                // TODO wait for them to "ACK" it or something
 
             case PrintLog(id) ⇒ writeLog.foreach(w ⇒ println(w.str))
             case IDMsg(id) ⇒ nodeID = id
@@ -78,28 +92,50 @@ class Server extends Actor with ActorLogging {
         }
 
         case m: Forward2 ⇒ m match {
-            case fwd @ BreakConnection(id1, id2) ⇒ deal(fwd, connectedServers -= _)
-            case fwd @ RestoreConnection(id1, id2) ⇒ deal(fwd, id ⇒ connectedServers += id → knownServers(id))
+            case fwd: BreakConnection   ⇒ otherID(fwd, connectedServers -= _)
+            case fwd: RestoreConnection ⇒ otherID(fwd, id ⇒ connectedServers += id → knownServers(id))
         }
-        case Servers(servers: Map[NodeID, ActorPath]) ⇒ addServers(servers)
+
+        case CreateServer(servers: Map[NodeID, ActorPath]) ⇒
+            if (servers.isEmpty) {
+                log.info("becoming primary server")
+                isPrimary = true
+                // TODO assign a name to myself
+
+                // TODO init my VersionVector
+            }
+            else addServers(servers)
+
         case ClientConnected ⇒ clients += sender
 
         // theoretically, this should happen in a child-actor
         //  -- "each actor should only do one thing"
         case m: AntiEntropyMsg ⇒ m match {
-            case LemmeUpgradeU          ⇒ sender ! myVersionVector
-            case vv: VersionVector      ⇒ sender ! findUpdatesGiven(vv)
-            case UpdateWrites(writes)   ⇒ updateLog(writes)
+            case LemmeUpgradeU                   ⇒ sender ! CurrentKnowledge(myVersionVector, csn)
+            case CurrentKnowledge(vec, commitNo) ⇒ sender ! allWritesSince(vec, commitNo)
+
+            case UpdateWrites(newWrites) ⇒
+                if (isPrimary) {
+                    writeLog ++= (newWrites map (_ commit nextCSN)) // stamp and add writes
+                    antiEntropizeAll()                              // propagate them out
+                }
+                else {
+                    val commits = newWrites filter (_.acceptStamp < INF)
+                    
+                    // update csn
+                    csn = (commits maxBy (_.acceptStamp)).acceptStamp
+
+                    // remove "tentative" writes that have "committed"
+                    val newTimestamps = (commits map (_.timestamp)).toSet
+                    writeLog = writeLog filter (newTimestamps contains _.timestamp)
+
+                    // insert all the new writes
+                    writeLog ++= newWrites
+                }
         }
     }
 
     def addServers(servers: Map[NodeID, ActorPath]) {
-        if (servers.isEmpty) {
-            // become "Primary Server"
-            log.info("becoming primary server")
-            isPrimary = true
-        }
-
         connectedServers ++= servers map { case (id, path) ⇒
             id → getSelection(path, context)
         }
@@ -108,6 +144,5 @@ class Server extends Actor with ActorLogging {
 }
 
 object Server {
-    def main(args: Array[String]): Unit =
-        (Common joinClusterAs "server").actorOf(Props[Server], name = "server")
+    def main(args: Array[String]) = Common joinClusterAs "server"
 }

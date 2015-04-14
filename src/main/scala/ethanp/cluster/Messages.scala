@@ -12,7 +12,7 @@ import scala.collection.SortedSet
 sealed class Msg()
 sealed trait MasterMsg extends Msg
 sealed trait Action {
-    def str: String
+    def str: Option[String]
 }
 
 class Forward(val i: NodeID) extends MasterMsg
@@ -28,14 +28,17 @@ case class  PrintLog(id: NodeID)                        extends Forward(id)
 case class  IDMsg(id: NodeID)                           extends Forward(id) with Administrativa
 
 case class  Put(clientID: NodeID, songName: String, url: String) extends Forward(clientID) with Action {
-    override def str: String = s"PUT:($songName, $url):"
+    override def str: Option[String] = Some(s"PUT:($songName, $url):")
 }
 case class Delete(clientID: NodeID, songName: String) extends Forward(clientID) with Action {
-    override def str: String = s"PUT:($songName):"
+    override def str: Option[String] = Some(s"PUT:($songName):")
 }
 case class Get(clientID: NodeID, songName: String) extends Forward(clientID)
 case class Song(songName: String, url: URL) extends Msg {
     def str: String = s"$songName:$url"
+}
+case class Retirement(serverName: ServerName) extends Action {
+    override def str: Option[String] = None
 }
 
 case object Pause                                       extends BrdcstServers
@@ -44,14 +47,18 @@ case object Stabilize                                   extends BrdcstServers
 
 sealed trait Administrativa extends Msg
 case class  ServerPath(path: ActorPath)                 extends Administrativa
-case class  Servers(servers: Map[NodeID, ActorPath])    extends Administrativa
+case class  CreateServer(servers: Map[NodeID, ActorPath])    extends Administrativa
 case object ClientConnected                             extends Administrativa
 
 case class Write(acceptStamp: LCValue, timestamp: Timestamp, action: Action) extends Ordered[Write] {
     override def compare(that: Write): Int = timestamp compare that.timestamp
 
     /* 'OP_TYPE:(OP_VALUE):STABLE_BOOL' */
-    def str = action.str + { if (acceptStamp == INF) "TRUE" else "FALSE" }
+    def str = action.str map { _ + { if (acceptStamp == INF) "TRUE" else "FALSE" } }
+    def commit(stamp: LCValue) = Write(stamp, timestamp, action)
+}
+object Write {
+    def apply(action: Action) = Write
 }
 case class Timestamp(lcVal: LCValue, acceptor: ServerName) extends Ordered[Timestamp] {
     override def compare(that: Timestamp): Int =
@@ -70,11 +77,17 @@ case class ServerName(name: String) extends Ordered[ServerName] {
 sealed trait AntiEntropyMsg
 case object LemmeUpgradeU extends AntiEntropyMsg
 case class VersionVector(vectorMap: Map[ServerName, LCValue] = Map.empty[ServerName, LCValue])
-        extends Ordered[VersionVector] with AntiEntropyMsg {
+        extends Ordered[VersionVector] {
     def knowsAbout(name: ServerName) = vectorMap contains name
-    override def compare(that: VersionVector): Int = ??? // oh snap I know this one
-    def isNotSince(write: Write): Boolean =
-        (vectorMap contains write.timestamp.acceptor) &&
-                (write.timestamp.lcVal > vectorMap(write.timestamp.acceptor))
+    override def compare(that: VersionVector): Int = ??? // I know this one, just haven't needed it
+
+    def isNotSince(ts: Timestamp): Boolean = {
+        def newerAcceptorThanIKnow = ??? // TODO
+        if (knowsAbout(ts.acceptor))
+            ts.lcVal > vectorMap(ts.acceptor)
+        else newerAcceptorThanIKnow
+
+    }
 }
 case class UpdateWrites(writes: SortedSet[Write]) extends AntiEntropyMsg
+case class CurrentKnowledge(versionVector: VersionVector, csn: LCValue) extends AntiEntropyMsg

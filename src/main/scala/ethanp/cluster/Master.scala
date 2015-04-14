@@ -36,7 +36,7 @@ object Master extends App {
     }
 
     /* make the master the first seed node */
-    val clusterKing = Common.joinClusterAs("2551", "master").actorOf(Props[Master], name = "master")
+    val clusterKing = Common.joinClusterAs("2551", "master")
 
     @volatile var clientID: NodeID = -1
     @volatile var serverID: NodeID = -1
@@ -139,7 +139,7 @@ class Master extends Actor with ActorLogging {
 
                 val server = refFromMember(m)
                 server ! IDMsg(sid)
-                server ! Servers(serverPaths)
+                server ! CreateServer(serverPaths)
 
             case "master" ⇒ log info "ignoring Master MemberUp"
         }
