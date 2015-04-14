@@ -9,10 +9,13 @@ import com.typesafe.config.ConfigFactory
  * 4/10/15
  */
 object Common {
+
     type NodeID = Int
     type LCValue = Int
     type URL = String
+
     val INF: LCValue = Integer.MAX_VALUE
+
     def joinClusterAs(role: String): ActorRef = Common.joinClusterAs("0", role)
     def joinClusterAs(port: String, role: String) = {
         val config = ConfigFactory.parseString(s"akka.remote.netty.tcp.port=$port").
@@ -25,6 +28,14 @@ object Common {
             case "master" ⇒ s.actorOf(Props[Master], name = "master")
         }
     }
+    /**
+     * Gets the (Protocol, IP-Address, Port) information for a node in the cluster.
+     */
     def getPath(m: Member) = RootActorPath(m.address) / "user" / m.roles.head
+
+    /**
+     * Gets a reference to an object that will create socket to a node in the cluster
+     * on demand when a message needs to be sent. (I think.)
+     */
     def getSelection(path: ActorPath, context: ActorContext) = context actorSelection path
 }

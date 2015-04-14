@@ -5,6 +5,7 @@
 3. `Master.handle(String)` should block until it satisfies the spec
     * A `ConditionVariable` could work, but maybe `Future` or `Promise` could
       be used instead
+4. **How does the first primary assign itself a `ServerName`??**
 
 ## Testing
 1. `expectMsg[T](d: Duration, msg: T): T`

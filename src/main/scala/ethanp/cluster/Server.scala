@@ -15,19 +15,21 @@ import scala.collection.SortedSet
 class Server extends Actor with ActorLogging {
 
     var logicalClock: LCValue = 0
-    var myVersionVector: VersionVector = _ // TODO still need join protocol where this is assigned
+    var myVersionVector: VersionVector = _
+    // TODO still need join protocol where this is assigned
     var isPrimary: Boolean = false
     var nodeID: NodeID = _
     var serverName: ServerName = _
     var csn: LCValue = 0
 
-    var clients          = Set.empty[ActorRef]
-    var writeLog         = SortedSet.empty[Write]
-    var databaseState    = Map.empty[String, URL]
+    var clients = Set.empty[ActorRef]
+    var writeLog = SortedSet.empty[Write]
+    var databaseState = Map.empty[String, URL]
     var connectedServers = Map.empty[NodeID, ActorSelection]
-    var knownServers     = Map.empty[NodeID, ActorSelection]
+    var knownServers = Map.empty[NodeID, ActorSelection]
 
     def getSong(songName: String) = Song(songName, databaseState(songName))
+
     def makeWrite(action: Action) = Write(INF, nextTimestamp, action)
 
     def nextCSN = {
@@ -41,15 +43,17 @@ class Server extends Actor with ActorLogging {
     }
 
     def appendAndSync(action: Action) = {
-        writeLog += makeWrite(action)    // append
-        antiEntropizeAll()               // sync
+        writeLog += makeWrite(action) // append
+        antiEntropizeAll()            // sync
     }
 
     /**
      * Initiates anti-entropy sessions with all `connectedServers`
      * Called after writing to the `writeLog`
      */
-    def antiEntropizeAll(): Unit = connectedServers.values foreach (_ ! LemmeUpgradeU)
+    def antiEntropizeAll(): Unit = broadcastServers(LemmeUpgradeU)
+
+    def broadcastServers(msg: Msg) = connectedServers.values foreach (_ ! msg)
 
     /**
      * Apply `f` to the node specified in the `Forward2` who is not me
@@ -62,12 +66,16 @@ class Server extends Actor with ActorLogging {
     def allWritesSince(vec: VersionVector, commitNo: LCValue): UpdateWrites =
         UpdateWrites(writeLog filter (w ⇒ (vec isNotSince w.timestamp) || w.acceptStamp > commitNo))
 
+    //noinspection EmptyParenMethodAccessedAsParameterless
     def receive = {
-
-        // TODO it could be that the sender() is a Server I've never seen before
 
         case m: Forward ⇒ m match {
 
+            /**
+             * Received from the Master.
+             * Instructs me to go through the retirement procedure,
+             * then exit the macro-cluster
+             */
             case RetireServer(id) ⇒
                 if (isPrimary) {
                     // TODO find another primary
@@ -80,22 +88,51 @@ class Server extends Actor with ActorLogging {
 
                 // TODO wait for them to "ACK" it or something
 
-            case PrintLog(id) ⇒ writeLog.foreach(w ⇒ println(w.str))
+                // TODO System.exit the macro-cluster?
+
+            /**
+             * Print my complete `writeLog` to `StdOut` in the specified format
+             */
+            case PrintLog(id) ⇒ writeLog flatMap (_.str) foreach println
+
+            /**
+             * The Master has assigned me a logical id
+             * which is used hereafter on the command line to refer to me
+             */
             case IDMsg(id) ⇒ nodeID = id
 
-            case p @ Put(clientID, songName, url) ⇒ appendAndSync(p)
-            case d @ Delete(clientID, songName)   ⇒ appendAndSync(d)
+            /**
+             * Client has submitted new log entry that I should replicate
+             */
+            case p@Put(clientID, songName, url) ⇒ appendAndSync(p)
+            case d@Delete(clientID, songName) ⇒ appendAndSync(d)
 
-            // TODO should return ERR_DEP when necessary (not sure when that IS yet)
+            /**
+             * Send the client back the Song they requested
+             * TODO should return ERR_DEP when necessary (not sure when that IS yet)
+             */
             case Get(clientID, songName) => sender ! getSong(songName)
+
             case _ => log error s"server wasn't expecting msg $m"
         }
 
         case m: Forward2 ⇒ m match {
+
+            /**
+             * "Breaking the connection" here means I never send them anything.
+             * Different nodes don't generally maintain longstanding TCP connections,
+             * they only create a socket connection when they are actively messaging each other;
+             * so there is no connection to physically break.
+             * They all remain connected to the macro-cluster at all times.
+             */
             case fwd: BreakConnection   ⇒ otherID(fwd, connectedServers -= _)
             case fwd: RestoreConnection ⇒ otherID(fwd, id ⇒ connectedServers += id → knownServers(id))
         }
 
+        /**
+         * Received by a server who was just added to the 'macro-cluster',
+         * uses this info to fully become one of the gang.
+         */
         case CreateServer(servers: Map[NodeID, ActorPath]) ⇒
             if (servers.isEmpty) {
                 log.info("becoming primary server")
@@ -104,24 +141,63 @@ class Server extends Actor with ActorLogging {
 
                 // TODO init my VersionVector
             }
-            else addServers(servers)
+            else {
+                // save existing servers
+                connectedServers ++= servers map { case (id, path) ⇒
+                    id → getSelection(path, context)
+                }
+                knownServers ++= connectedServers
 
+                // tell them that I exist
+                broadcastServers(IExist(nodeID))
+
+                // TODO `ask()` one of them for an ID; blocking till it is received
+            }
+
+        /**
+         * Received by all connected servers from a new server in the macro-cluster
+         * who wants to receive epidemics just like all the cool kids.
+         */
+        case IExist(id) ⇒
+            val serverPair = id → getSelection(sender.path, context)
+            connectedServers += serverPair
+            knownServers += serverPair
+
+        /**
+         * Sent by a client for whom this server is the only one it knows (I think).
+         * TODO But wait what about if this guy crashes, whatcha gon' duu?
+         */
         case ClientConnected ⇒ clients += sender
 
-        // theoretically, this should happen in a child-actor
-        //  -- "each actor should only do one thing"
+        /**
+         * Theoretically this should be taking place in a spawned child-actor (solo si tendría tiempo).
+         */
         case m: AntiEntropyMsg ⇒ m match {
-            case LemmeUpgradeU                   ⇒ sender ! CurrentKnowledge(myVersionVector, csn)
+
+            /**
+             * Proposition from someone else that they want to update all of my knowledges.
+             */
+            case LemmeUpgradeU ⇒ sender ! CurrentKnowledge(myVersionVector, csn)
+
+            /**
+             * Since I know what you know,
+             * I can tell you everything I know,
+             * where I know you don't know it.
+             */
             case CurrentKnowledge(vec, commitNo) ⇒ sender ! allWritesSince(vec, commitNo)
 
+            /**
+             * Those writes they thought I didn't know,
+             * including things I knew only "tentatively" that have now "committed".
+             */
             case UpdateWrites(newWrites) ⇒
                 if (isPrimary) {
                     writeLog ++= (newWrites map (_ commit nextCSN)) // stamp and add writes
-                    antiEntropizeAll()                              // propagate them out
+                    antiEntropizeAll() // propagate them out
                 }
                 else {
                     val commits = newWrites filter (_.acceptStamp < INF)
-                    
+
                     // update csn
                     csn = (commits maxBy (_.acceptStamp)).acceptStamp
 
@@ -134,14 +210,8 @@ class Server extends Actor with ActorLogging {
                 }
         }
     }
-
-    def addServers(servers: Map[NodeID, ActorPath]) {
-        connectedServers ++= servers map { case (id, path) ⇒
-            id → getSelection(path, context)
-        }
-        knownServers ++= connectedServers
-    }
 }
+
 
 object Server {
     def main(args: Array[String]) = Common joinClusterAs "server"

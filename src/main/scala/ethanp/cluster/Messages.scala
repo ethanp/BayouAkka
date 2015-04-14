@@ -41,14 +41,15 @@ case class Retirement(serverName: ServerName) extends Action {
     override def str: Option[String] = None
 }
 
-case object Pause                                       extends BrdcstServers
-case object Start                                       extends BrdcstServers
-case object Stabilize                                   extends BrdcstServers
+case object Pause     extends BrdcstServers
+case object Start     extends BrdcstServers
+case object Stabilize extends BrdcstServers
 
 sealed trait Administrativa extends Msg
-case class  ServerPath(path: ActorPath)                 extends Administrativa
-case class  CreateServer(servers: Map[NodeID, ActorPath])    extends Administrativa
-case object ClientConnected                             extends Administrativa
+case class  ServerPath(path: ActorPath) extends Administrativa
+case class  CreateServer(servers: Map[NodeID, ActorPath]) extends Administrativa
+case object ClientConnected             extends Administrativa
+case class  IExist(nodeID: NodeID)      extends Administrativa
 
 case class Write(acceptStamp: LCValue, timestamp: Timestamp, action: Action) extends Ordered[Write] {
     override def compare(that: Write): Int = timestamp compare that.timestamp
@@ -74,7 +75,7 @@ case class ServerName(name: String) extends Ordered[ServerName] {
     override def compare(that: ServerName): Int = name compare that.name
 }
 
-sealed trait AntiEntropyMsg
+sealed trait AntiEntropyMsg extends Msg
 case object LemmeUpgradeU extends AntiEntropyMsg
 case class VersionVector(vectorMap: Map[ServerName, LCValue] = Map.empty[ServerName, LCValue])
         extends Ordered[VersionVector] {
