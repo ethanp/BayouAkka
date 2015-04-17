@@ -1,10 +1,11 @@
 package ethanp.cluster
 
 import akka.actor._
+import akka.util.Timeout
 import ethanp.cluster.ClusterUtil._
 
 import scala.collection.SortedSet
-
+import scala.concurrent.duration._
 
 /**
  * Ethan Petuchowski
@@ -14,9 +15,12 @@ import scala.collection.SortedSet
  */
 class Server extends BayouMem {
 
+    implicit val timeout = Timeout(5.seconds)
     var logicalClock: LCValue = 0
-    var myVersionVector: VersionVector = _
+
     // TODO still need join protocol where this is assigned
+    var myVersionVector: VersionVector = _
+
     var isPrimary: Boolean = false
     override var nodeID: NodeID = _
     var serverName: ServerName = _
@@ -88,7 +92,8 @@ class Server extends BayouMem {
     }
 
     def createServer(c: CreateServer) = {
-        if (c.servers.isEmpty) {
+        val servers = c.servers filterNot (_._1 == nodeID)
+        if (servers.isEmpty) {
             log.info("assuming I'm first server, becoming primary with name '0'")
 
             // assume role of primary
@@ -103,7 +108,7 @@ class Server extends BayouMem {
         }
         else {
             // save existing servers
-            connectedServers ++= c.servers map { case (id, path) ⇒
+            connectedServers ++= servers map { case (id, path) ⇒
                 id → getSelection(path)
             }
             knownServers ++= connectedServers
@@ -111,11 +116,9 @@ class Server extends BayouMem {
             // tell them that I exist
             broadcastServers(IExist(nodeID))
 
-            // TODO `ask()` one of them for a name; blocking till it is received
-
-            // TODO create version vector
-
-            // TODO assign logical clock value
+            // `ask` (the first) one for a name; blocking till it is received
+            // of course it needn't be the first one, could be e.g. the one with the shortest name
+            connectedServers.head._2 ! CreationWrite
         }
     }
 
@@ -152,7 +155,31 @@ class Server extends BayouMem {
         case fwd: BreakConnection   ⇒ otherID(fwd, connectedServers -= _)
         case fwd: RestoreConnection ⇒ otherID(fwd, id ⇒ connectedServers += id → knownServers(id))
 
-        case m @ Hello ⇒ println(s"server $nodeID present!")
+        case Hello ⇒ println(s"server $nodeID present!")
+
+        case CreationWrite ⇒
+            // add creation to writeLog
+            val write = makeWrite(CreationWrite)
+            writeLog += write
+
+            // reply with their new name
+            sender ! ServerName(write.toString)
+
+
+        case s: ServerName ⇒
+            serverName = s
+
+            // TODO retrieve someone's complete write log?
+
+            // TODO create version vector
+
+            // TODO assign logical clock value
+
+        /**
+         * Received by a server who was just added to the 'macro-cluster',
+         * uses this info to fully become one of the gang.
+         */
+        case m: CreateServer ⇒ createServer(m)
 
         /**
          * Received from the Master.
@@ -187,11 +214,6 @@ class Server extends BayouMem {
         case Get(clientID, songName) => sender ! getSong(songName)
 
 
-        /**
-         * Received by a server who was just added to the 'macro-cluster',
-         * uses this info to fully become one of the gang.
-         */
-        case m: CreateServer ⇒ createServer(m)
 
         /**
          * Received by all connected servers from a new server in the macro-cluster

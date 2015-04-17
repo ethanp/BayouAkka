@@ -95,8 +95,6 @@ object Master extends App {
             case "delete"            ⇒ clusterKing ! Delete(clientID = b1i, songName = b2)
             case "put"               ⇒ clusterKing ! Put(clientID = b1i, songName = b2, url = brkStr(3))
 
-
-            /** This */
             case "hello" ⇒ clusterKing ! Hello
         }
     }

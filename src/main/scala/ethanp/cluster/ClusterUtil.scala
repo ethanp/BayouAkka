@@ -44,17 +44,13 @@ object ClusterUtil {
 }
 
 trait BayouMem extends Actor with ActorLogging {
-
     var nodeID: NodeID
-
     val printMsg: PartialFunction[Any, Msg] = {
         case any: Msg ⇒
             println(s"node $nodeID rcvd $any")
             any
     }
-
     def handleMsg: PartialFunction[Msg, Unit]
-
     val printReceive: PartialFunction[Any, Unit] = printMsg andThen handleMsg
     override def receive: PartialFunction[Any, Unit] = printReceive
 }

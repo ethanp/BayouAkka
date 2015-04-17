@@ -70,7 +70,7 @@ case class Timestamp(lcVal: LCValue, acceptor: ServerName) extends Ordered[Times
             acceptor compare that.acceptor
         }
 }
-case class ServerName(name: String) extends Ordered[ServerName] {
+case class ServerName(name: String) extends Msg with Ordered[ServerName] {
     // I think any (associative, commutative, reflexive, transitive) comparison is probably fine
     override def compare(that: ServerName): Int = name compare that.name
 }
@@ -95,3 +95,6 @@ case class CurrentKnowledge(versionVector: VersionVector, csn: LCValue) extends 
 case object Hello extends Msg
 case class NewClient(cid: NodeID, sid: NodeID)  extends Msg
 case class NewServer(sid: NodeID) extends Msg
+case object CreationWrite extends Msg with Action {
+    override def str: Option[String] = None // TODO is it correct to not print CreationWrites ?
+}
