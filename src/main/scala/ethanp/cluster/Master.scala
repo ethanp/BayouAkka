@@ -107,7 +107,7 @@ object Master extends App {
  *
  * TODO somehow it has to inform the CLI when this is DONE so it can stop blocking.
  */
-class Master extends Actor with ActorLogging {
+class Master extends PrintReceiver {
     var members = Map.empty[NodeID, Member]
 
     /**
@@ -137,9 +137,8 @@ class Master extends Actor with ActorLogging {
     def broadcastClients(msg: Msg): Msg = broadcast(clients.values, msg)
     def broadcast(who: Iterable[Member], msg: Msg): Msg = { who foreach { selFromMember(_) ! msg }; msg }
 
-    override def receive: PartialFunction[Any, Unit] = {
-
-        /* CLI Events */
+    override def handleMsg: PartialFunction[Msg, Unit] = {
+         /* CLI Events */
         case NewServer(sid) ⇒
             serverID = sid
             // BLOCK (no `handleNext`)
@@ -156,6 +155,11 @@ class Master extends Actor with ActorLogging {
         case m @ Forward(id) ⇒ getMember(id) forward m
         case m @ Forward2(i, j) ⇒ Seq(i, j) foreach (getMember(_) forward m)
         case m : BrdcstServers ⇒ broadcastServers(m)
+    }
+
+    override def receive: PartialFunction[Any, Unit] = handleClusterCallback orElse printReceive
+
+    val handleClusterCallback: PartialFunction[Any, Unit] = {
 
         /**
          * A member has 'officially' been added to the macro-cluster.

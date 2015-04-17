@@ -55,7 +55,7 @@ case class Write(acceptStamp: LCValue, timestamp: Timestamp, action: Action) ext
     override def compare(that: Write): Int = timestamp compare that.timestamp
 
     /* 'OP_TYPE:(OP_VALUE):STABLE_BOOL' */
-    def str = action.str map { _ + { if (acceptStamp == INF) "TRUE" else "FALSE" } }
+    def strOpt = action.str map { _ + { if (acceptStamp == INF) "TRUE" else "FALSE" } }
     def commit(stamp: LCValue) = Write(stamp, timestamp, action)
 }
 object Write {
@@ -77,10 +77,10 @@ case class ServerName(name: String) extends Ordered[ServerName] {
 
 sealed trait AntiEntropyMsg extends Msg
 case object LemmeUpgradeU extends AntiEntropyMsg
-case class VersionVector(vectorMap: Map[ServerName, LCValue] = Map.empty[ServerName, LCValue])
-        extends Ordered[VersionVector] {
+case class VersionVector(vectorMap: Map[ServerName, LCValue] = Map.empty) extends Ordered[VersionVector] {
     def knowsAbout(name: ServerName) = vectorMap contains name
     override def compare(that: VersionVector): Int = ??? // I know this one, just haven't needed it
+
 
     def isNotSince(ts: Timestamp): Boolean = {
         def newerAcceptorThanIKnow = ??? // TODO
@@ -93,5 +93,5 @@ case class VersionVector(vectorMap: Map[ServerName, LCValue] = Map.empty[ServerN
 case class UpdateWrites(writes: SortedSet[Write]) extends AntiEntropyMsg
 case class CurrentKnowledge(versionVector: VersionVector, csn: LCValue) extends AntiEntropyMsg
 case object Hello extends Msg
-case class NewClient(cid: NodeID, sid: NodeID)
-case class NewServer(sid: NodeID)
+case class NewClient(cid: NodeID, sid: NodeID)  extends Msg
+case class NewServer(sid: NodeID) extends Msg

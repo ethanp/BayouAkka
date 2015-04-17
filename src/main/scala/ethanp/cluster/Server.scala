@@ -12,7 +12,7 @@ import scala.collection.SortedSet
  *
  * Upon creation, it connects to all other servers in the system
  */
-class Server extends Actor with ActorLogging {
+class Server extends PrintReceiver {
 
     var logicalClock: LCValue = 0
     var myVersionVector: VersionVector = _
@@ -66,8 +66,7 @@ class Server extends Actor with ActorLogging {
     def allWritesSince(vec: VersionVector, commitNo: LCValue): UpdateWrites =
         UpdateWrites(writeLog filter (w ⇒ (vec isNotSince w.timestamp) || w.acceptStamp > commitNo))
 
-    //noinspection EmptyParenMethodAccessedAsParameterless
-    def receive: PartialFunction[Any, Unit] = {
+    override def handleMsg: PartialFunction[Msg, Unit] = {
 
         case m @ Hello ⇒ println(s"server $nodeID present!")
 
@@ -100,7 +99,7 @@ class Server extends Actor with ActorLogging {
             /**
              * Print my complete `writeLog` to `StdOut` in the specified format
              */
-            case PrintLog(id) ⇒ writeLog flatMap (_.str) foreach println
+            case PrintLog(id) ⇒ writeLog flatMap (_.strOpt) foreach println
 
             /**
              * The Master has assigned me a logical id
@@ -144,11 +143,17 @@ class Server extends Actor with ActorLogging {
          */
         case CreateServer(servers: Map[NodeID, ActorPath]) ⇒
             if (servers.isEmpty) {
-                log.info("becoming primary server")
-                isPrimary = true
-                // TODO assign a name to myself
+                log.info("assuming I'm first server, becoming primary with name '0'")
 
-                // TODO init my VersionVector
+                // assume role of primary
+                isPrimary = true
+
+                // assign my name
+                // TODO could be implicit conversion String -> ServerName
+                serverName = ServerName("0")
+
+                // init my VersionVector
+                myVersionVector = VersionVector(Map(serverName → logicalClock))
             }
             else {
                 // save existing servers
@@ -160,7 +165,11 @@ class Server extends Actor with ActorLogging {
                 // tell them that I exist
                 broadcastServers(IExist(nodeID))
 
-                // TODO `ask()` one of them for an ID; blocking till it is received
+                // TODO `ask()` one of them for a name; blocking till it is received
+
+                // TODO create version vector
+
+                // TODO assign logical clock value
             }
 
         /**
@@ -174,7 +183,9 @@ class Server extends Actor with ActorLogging {
 
         /**
          * Sent by a client for whom this server is the only one it knows (I think).
-         * TODO But wait what about if this guy crashes, whatcha gon' duu?
+         *
+         *  Q: What about if this guy crashes?
+         *  A: Nodes cannot simply 'crash'.
          */
         case ClientConnected ⇒ clients += sender
 
@@ -219,6 +230,9 @@ class Server extends Actor with ActorLogging {
                 }
         }
     }
+
+    //noinspection EmptyParenMethodAccessedAsParameterless
+    override def receive: PartialFunction[Any, Unit] = printReceive
 }
 
 

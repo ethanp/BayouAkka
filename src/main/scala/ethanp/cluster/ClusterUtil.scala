@@ -41,3 +41,16 @@ object ClusterUtil {
      */
     def getSelection(path: ActorPath)(implicit context: ActorContext): ActorSelection = context actorSelection path
 }
+
+trait PrintReceiver extends Actor with ActorLogging {
+
+    val printMsg: PartialFunction[Any, Msg] = {
+        case any: Msg ⇒
+            println(s"rcvd $any")
+            any
+    }
+
+    def handleMsg: PartialFunction[Msg, Unit]
+
+    val printReceive: PartialFunction[Any, Unit] = printMsg andThen handleMsg
+}
