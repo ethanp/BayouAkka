@@ -5,6 +5,7 @@ import akka.util.Timeout
 import ethanp.cluster.ClusterUtil._
 
 import scala.collection.SortedSet
+import scala.collection.mutable
 import scala.concurrent.duration._
 
 /**
@@ -17,8 +18,8 @@ class Server extends BayouMem {
 
     implicit val timeout = Timeout(5.seconds)
 
-    // TODO still need join protocol where this is assigned
-    var myVersionVector: VersionVector = _
+    // TODO still need to impmt join protocol where this is assigned
+    var myVV = new MutableVV
 
     var isPrimary: Boolean = false
     override var nodeID: NodeID = _
@@ -31,7 +32,8 @@ class Server extends BayouMem {
     var connectedServers = Map.empty[NodeID, ActorSelection]
     var knownServers = Map.empty[NodeID, ActorSelection]
 
-    def logicalClock: LCValue = myVersionVector get serverName
+    def logicalClock: LCValue = myVV(serverName)
+    def incrementMyLC(): LCValue = myVV increment serverName
     def getSong(songName: String) = Song(songName, databaseState(songName))
 
     def makeWrite(action: Action) = Write(INF, nextTimestamp, action)
@@ -42,10 +44,7 @@ class Server extends BayouMem {
     }
 
     def nextTimestamp = {
-        // TODO I broke this and now I need to fix it
-        // TODO I need to increment `logicalClock` in here but that now means creating a new VersionVector
-
-        Timestamp(logicalClock, serverName)
+        Timestamp(incrementMyLC(), serverName)
     }
 
     def appendAndSync(action: Action): Unit = {
@@ -69,7 +68,7 @@ class Server extends BayouMem {
     /**
      * @return all updates strictly after the given `versionVector` and commits since CSN
      */
-    def allWritesSince(vec: VersionVector, commitNo: LCValue): UpdateWrites =
+    def allWritesSince(vec: ImmutableVV, commitNo: LCValue): UpdateWrites =
         UpdateWrites(writeLog filter (w ⇒ (vec isNotSince w.timestamp) || w.acceptStamp > commitNo))
 
     def createServer(c: CreateServer) = {
@@ -85,7 +84,7 @@ class Server extends BayouMem {
             serverName = ServerName("0")
 
             // init my VersionVector
-            myVersionVector = VersionVector(Map(serverName → 0))
+            myVV = new MutableVV(mutable.Map(serverName → 0))
         }
         else {
             // save existing servers
@@ -146,7 +145,7 @@ class Server extends BayouMem {
     }
 
     def addMemberToVersionVector(serverName: ServerName): Unit = {
-        myVersionVector = VersionVector(myVersionVector.vectorMap + (serverName → logicalClock))
+        myVV = ImmutableVV(myVV.vectorMap + (serverName → logicalClock))
     }
 
     def creationWrite(): Unit = {
@@ -259,7 +258,7 @@ class Server extends BayouMem {
             /**
              * Proposition from someone else that they want to update all of my knowledges.
              */
-            case LemmeUpgradeU ⇒ sender ! CurrentKnowledge(myVersionVector, csn)
+            case LemmeUpgradeU ⇒ sender ! CurrentKnowledge(myVV, csn)
 
             /**
              * Since I know what you know,
