@@ -81,7 +81,6 @@ case class VersionVector(vectorMap: Map[ServerName, LCValue] = Map.empty) extend
     def knowsAbout(name: ServerName) = vectorMap contains name
     override def compare(that: VersionVector): Int = ??? // I know this one, just haven't needed it
 
-
     def isNotSince(ts: Timestamp): Boolean = {
         def newerAcceptorThanIKnow = ??? // TODO
         if (knowsAbout(ts.acceptor))
@@ -89,7 +88,9 @@ case class VersionVector(vectorMap: Map[ServerName, LCValue] = Map.empty) extend
         else newerAcceptorThanIKnow
 
     }
+    def get(serverName: ServerName): LCValue = vectorMap(serverName)
 }
+
 case class UpdateWrites(writes: SortedSet[Write]) extends AntiEntropyMsg
 case class CurrentKnowledge(versionVector: VersionVector, csn: LCValue) extends AntiEntropyMsg
 case object Hello extends Msg

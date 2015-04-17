@@ -16,7 +16,6 @@ import scala.concurrent.duration._
 class Server extends BayouMem {
 
     implicit val timeout = Timeout(5.seconds)
-    var logicalClock: LCValue = 0
 
     // TODO still need join protocol where this is assigned
     var myVersionVector: VersionVector = _
@@ -32,6 +31,7 @@ class Server extends BayouMem {
     var connectedServers = Map.empty[NodeID, ActorSelection]
     var knownServers = Map.empty[NodeID, ActorSelection]
 
+    def logicalClock: LCValue = myVersionVector get serverName
     def getSong(songName: String) = Song(songName, databaseState(songName))
 
     def makeWrite(action: Action) = Write(INF, nextTimestamp, action)
@@ -42,7 +42,9 @@ class Server extends BayouMem {
     }
 
     def nextTimestamp = {
-        logicalClock += 1
+        // TODO I broke this and now I need to fix it
+        // TODO I need to increment `logicalClock` in here but that now means creating a new VersionVector
+
         Timestamp(logicalClock, serverName)
     }
 
@@ -70,7 +72,38 @@ class Server extends BayouMem {
     def allWritesSince(vec: VersionVector, commitNo: LCValue): UpdateWrites =
         UpdateWrites(writeLog filter (w ⇒ (vec isNotSince w.timestamp) || w.acceptStamp > commitNo))
 
+    def createServer(c: CreateServer) = {
+        val servers = c.servers filterNot (_._1 == nodeID)
+        if (servers.isEmpty) {
+            log.info("assuming I'm first server, becoming primary with name '0'")
 
+            // assume role of primary
+            isPrimary = true
+
+            // assign my name
+            // TODO could be implicit conversion String -> ServerName
+            serverName = ServerName("0")
+
+            // init my VersionVector
+            myVersionVector = VersionVector(Map(serverName → 0))
+        }
+        else {
+            // save existing servers
+            connectedServers ++= servers map { case (id, path) ⇒
+                id → getSelection(path)
+            }
+            knownServers ++= connectedServers
+
+            // tell them that I exist
+            broadcastServers(IExist(nodeID))
+
+            /**
+             * "A Bayou server S_i creates itself by sending a 'creation write' to another server S_k
+             *  Any server for the database can be used."
+             */
+            connectedServers.head._2 ! CreationWrite
+        }
+    }
 
     def retireServer(server: RetireServer): Unit = {
         if (isPrimary) {
@@ -89,37 +122,6 @@ class Server extends BayouMem {
          * self ! PoisonPill --- first process current mailbox, then actor will exit
          */
         context stop self
-    }
-
-    def createServer(c: CreateServer) = {
-        val servers = c.servers filterNot (_._1 == nodeID)
-        if (servers.isEmpty) {
-            log.info("assuming I'm first server, becoming primary with name '0'")
-
-            // assume role of primary
-            isPrimary = true
-
-            // assign my name
-            // TODO could be implicit conversion String -> ServerName
-            serverName = ServerName("0")
-
-            // init my VersionVector
-            myVersionVector = VersionVector(Map(serverName → logicalClock))
-        }
-        else {
-            // save existing servers
-            connectedServers ++= servers map { case (id, path) ⇒
-                id → getSelection(path)
-            }
-            knownServers ++= connectedServers
-
-            // tell them that I exist
-            broadcastServers(IExist(nodeID))
-
-            // `ask` (the first) one for a name; blocking till it is received
-            // of course it needn't be the first one, could be e.g. the one with the shortest name
-            connectedServers.head._2 ! CreationWrite
-        }
     }
 
     def updateWrites(w: UpdateWrites): Unit = {
@@ -143,6 +145,24 @@ class Server extends BayouMem {
         }
     }
 
+    def addMemberToVersionVector(serverName: ServerName): Unit = {
+        myVersionVector = VersionVector(myVersionVector.vectorMap + (serverName → logicalClock))
+    }
+
+    def creationWrite(): Unit = {
+        // add creation to writeLog
+        val write = makeWrite(CreationWrite)
+        val serverName = ServerName(write.toString)
+
+        writeLog += write
+
+        // add them to my version vector
+        addMemberToVersionVector(serverName)
+
+        // reply with their new name
+        sender ! serverName
+    }
+
     override def handleMsg: PartialFunction[Msg, Unit] = {
 
         /**
@@ -157,23 +177,20 @@ class Server extends BayouMem {
 
         case Hello ⇒ println(s"server $nodeID present!")
 
-        case CreationWrite ⇒
-            // add creation to writeLog
-            val write = makeWrite(CreationWrite)
-            writeLog += write
-
-            // reply with their new name
-            sender ! ServerName(write.toString)
+        case CreationWrite ⇒ creationWrite()
 
 
         case s: ServerName ⇒
+
+            // "<T_{k,i}, S_k> becomes S_i’s server-id."
             serverName = s
 
-            // TODO retrieve someone's complete write log?
+            // TODO "The new server uses (T_{k,i} + 1) to initialize its own accept-stamp counter."
+
+            // TODO retrieve sender's complete write log?
 
             // TODO create version vector
 
-            // TODO assign logical clock value
 
         /**
          * Received by a server who was just added to the 'macro-cluster',
