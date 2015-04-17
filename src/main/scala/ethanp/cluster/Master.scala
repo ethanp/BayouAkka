@@ -84,16 +84,16 @@ object Master extends App {
         brkStr head match {
             case "joinServer"        ⇒ createServer(sid = b1i)
             case "joinClient"        ⇒ createClient(cid = b1i, sid = b2i)
-            case "retireServer"      ⇒ clusterKing ! RetireServer(i = b1i)
-            case "breakConnection"   ⇒ clusterKing ! BreakConnection(i = b1i, j = b2i)
-            case "restoreConnection" ⇒ clusterKing ! RestoreConnection(i = b1i, j = b2i)
+            case "retireServer"      ⇒ clusterKing ! RetireServer(id = b1i)
+            case "breakConnection"   ⇒ clusterKing ! BreakConnection(id1 = b1i, id2 = b2i)
+            case "restoreConnection" ⇒ clusterKing ! RestoreConnection(id1 = b1i, id2 = b2i)
             case "pause"             ⇒ clusterKing ! Pause
             case "start"             ⇒ clusterKing ! Start
             case "stabilize"         ⇒ clusterKing ! Stabilize
-            case "printLog"          ⇒ clusterKing ! PrintLog(i = b1i)
-            case "get"               ⇒ clusterKing ! Get(i = b1i, songName = b2)
-            case "delete"            ⇒ clusterKing ! Delete(i = b1i, songName = b2)
-            case "put"               ⇒ clusterKing ! Put(i = b1i, songName = b2, url = brkStr(3))
+            case "printLog"          ⇒ clusterKing ! PrintLog(id = b1i)
+            case "get"               ⇒ clusterKing ! Get(clientID = b1i, songName = b2)
+            case "delete"            ⇒ clusterKing ! Delete(clientID = b1i, songName = b2)
+            case "put"               ⇒ clusterKing ! Put(clientID = b1i, songName = b2, url = brkStr(3))
 
 
             /** This */

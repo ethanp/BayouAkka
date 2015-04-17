@@ -9,36 +9,31 @@ import scala.collection.SortedSet
  * Ethan Petuchowski
  * 4/9/15
  */
-sealed class Msg()
+sealed class Msg() extends Serializable
 sealed trait MasterMsg extends Msg
 sealed trait Action {
     def str: Option[String]
 }
 
-trait Forward extends MasterMsg {
-    val i: NodeID
-}
-trait Forward2 extends MasterMsg {
-    val i: NodeID
-    val j: NodeID
-}
+class Forward(val i: NodeID) extends MasterMsg
+class Forward2(val i: NodeID, val j: NodeID) extends MasterMsg
 object Forward { def unapply(fwd: Forward): Option[NodeID] = Some(fwd.i) }
 object Forward2 { def unapply(fwd: Forward2): Option[(NodeID, NodeID)] = Some(fwd.i, fwd.j) }
 
 trait BrdcstServers extends MasterMsg
-case class  RetireServer(i: NodeID)                 extends Forward
-case class  BreakConnection(i: NodeID, j: NodeID)   extends Forward2
-case class  RestoreConnection(i: NodeID, j: NodeID) extends Forward2
-case class  PrintLog(i: NodeID)                     extends Forward
-case class  IDMsg(i: NodeID)                        extends Forward with Administrativa
+case class  RetireServer(id: NodeID)                    extends Forward(id)
+case class  BreakConnection(id1: NodeID, id2: NodeID)   extends Forward2(id1, id2)
+case class  RestoreConnection(id1: NodeID, id2: NodeID) extends Forward2(id1, id2)
+case class  PrintLog(id: NodeID)                        extends Forward(id)
+case class  IDMsg(id: NodeID)                           extends Forward(id) with Administrativa
 
-case class  Put(i: NodeID, songName: String, url: String) extends Forward with Action {
+case class  Put(clientID: NodeID, songName: String, url: String) extends Forward(clientID) with Action {
     override def str: Option[String] = Some(s"PUT:($songName, $url):")
 }
-case class Delete(i: NodeID, songName: String) extends Forward with Action {
+case class Delete(clientID: NodeID, songName: String) extends Forward(clientID) with Action {
     override def str: Option[String] = Some(s"PUT:($songName):")
 }
-case class Get(i: NodeID, songName: String) extends Forward
+case class Get(clientID: NodeID, songName: String) extends Forward(clientID)
 case class Song(songName: String, url: URL) extends Msg {
     def str: String = s"$songName:$url"
 }

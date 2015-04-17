@@ -86,11 +86,16 @@ class Server extends Actor with ActorLogging {
                 writeLog += makeWrite(Retirement(serverName))
 
                 // TODO tell someone else of my retirement
-                connectedServers
+//                connectedServers
 
-                // TODO wait for them to "ACK" it or something
+                // TODO wait for them to "ACK" it or something? Use an `?` for that?
 
-                // TODO System.exit the macro-cluster?
+                /**
+                 * context stop self --- the current msg will be the last processed before exiting
+                 * self ! PoisonPill --- first process current mailbox, then actor will exit
+                 */
+                context stop self
+
 
             /**
              * Print my complete `writeLog` to `StdOut` in the specified format
