@@ -3,6 +3,7 @@ package ethanp.cluster
 import akka.actor._
 import akka.cluster.Member
 import com.typesafe.config.ConfigFactory
+import ethanp.cluster.ClusterUtil.NodeID
 
 /**
  * Ethan Petuchowski
@@ -42,15 +43,18 @@ object ClusterUtil {
     def getSelection(path: ActorPath)(implicit context: ActorContext): ActorSelection = context actorSelection path
 }
 
-trait PrintReceiver extends Actor with ActorLogging {
+trait BayouMem extends Actor with ActorLogging {
+
+    var nodeID: NodeID
 
     val printMsg: PartialFunction[Any, Msg] = {
         case any: Msg ⇒
-            println(s"rcvd $any")
+            println(s"node $nodeID rcvd $any")
             any
     }
 
     def handleMsg: PartialFunction[Msg, Unit]
 
     val printReceive: PartialFunction[Any, Unit] = printMsg andThen handleMsg
+    override def receive: PartialFunction[Any, Unit] = printReceive
 }

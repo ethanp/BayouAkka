@@ -7,16 +7,16 @@ import ethanp.cluster.ClusterUtil.NodeID
  * Ethan Petuchowski
  * 4/9/15
  */
-class Client extends Actor with ActorLogging {
+class Client extends BayouMem {
 
     // TODO we're assuming client can only connect to a SINGLE server, right?
     var server: ActorSelection = _
-    var myID:   NodeID = _
+    override var nodeID: NodeID = _
 
-    override def receive: PartialFunction[Any, Unit] = {
+    override def handleMsg: PartialFunction[Any, Unit] = {
 
-        case IDMsg(id) ⇒ myID = id
-        case Hello ⇒ println(s"client $myID present!")
+        case IDMsg(id) ⇒ nodeID = id
+        case Hello ⇒ println(s"client $nodeID present!")
         case m: Forward ⇒ server forward m
 
 

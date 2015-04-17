@@ -12,13 +12,13 @@ import scala.collection.SortedSet
  *
  * Upon creation, it connects to all other servers in the system
  */
-class Server extends PrintReceiver {
+class Server extends BayouMem {
 
     var logicalClock: LCValue = 0
     var myVersionVector: VersionVector = _
     // TODO still need join protocol where this is assigned
     var isPrimary: Boolean = false
-    var nodeID: NodeID = _
+    override var nodeID: NodeID = _
     var serverName: ServerName = _
     var csn: LCValue = 0
 
@@ -66,111 +66,132 @@ class Server extends PrintReceiver {
     def allWritesSince(vec: VersionVector, commitNo: LCValue): UpdateWrites =
         UpdateWrites(writeLog filter (w ⇒ (vec isNotSince w.timestamp) || w.acceptStamp > commitNo))
 
+
+
+    def retireServer(server: RetireServer): Unit = {
+        if (isPrimary) {
+            // TODO find another primary
+        }
+        // append a retirement-write
+        writeLog += makeWrite(Retirement(serverName))
+
+        // TODO tell someone else of my retirement
+        //                connectedServers
+
+        // TODO wait for them to "ACK" it or something? Use an `?` for that?
+
+        /**
+         * context stop self --- the current msg will be the last processed before exiting
+         * self ! PoisonPill --- first process current mailbox, then actor will exit
+         */
+        context stop self
+    }
+
+    def createServer(c: CreateServer) = {
+        if (c.servers.isEmpty) {
+            log.info("assuming I'm first server, becoming primary with name '0'")
+
+            // assume role of primary
+            isPrimary = true
+
+            // assign my name
+            // TODO could be implicit conversion String -> ServerName
+            serverName = ServerName("0")
+
+            // init my VersionVector
+            myVersionVector = VersionVector(Map(serverName → logicalClock))
+        }
+        else {
+            // save existing servers
+            connectedServers ++= c.servers map { case (id, path) ⇒
+                id → getSelection(path)
+            }
+            knownServers ++= connectedServers
+
+            // tell them that I exist
+            broadcastServers(IExist(nodeID))
+
+            // TODO `ask()` one of them for a name; blocking till it is received
+
+            // TODO create version vector
+
+            // TODO assign logical clock value
+        }
+    }
+
+    def updateWrites(w: UpdateWrites): Unit = {
+        val newWrites = w.writes
+        if (isPrimary) {
+            writeLog ++= (newWrites map (_ commit nextCSN)) // stamp and add writes
+            antiEntropizeAll() // propagate them out
+        }
+        else {
+            val commits = newWrites filter (_.acceptStamp < INF)
+
+            // update csn
+            csn = (commits maxBy (_.acceptStamp)).acceptStamp
+
+            // remove "tentative" writes that have "committed"
+            val newTimestamps = (commits map (_.timestamp)).toSet
+            writeLog = writeLog filter (newTimestamps contains _.timestamp)
+
+            // insert all the new writes
+            writeLog ++= newWrites
+        }
+    }
+
     override def handleMsg: PartialFunction[Msg, Unit] = {
+
+        /**
+         * "Breaking the connection" here means I never send them anything.
+         * Different nodes don't generally maintain longstanding TCP connections,
+         * they only create a socket connection when they are actively messaging each other;
+         * so there is no connection to physically break.
+         * They all remain connected to the macro-cluster at all times.
+         */
+        case fwd: BreakConnection   ⇒ otherID(fwd, connectedServers -= _)
+        case fwd: RestoreConnection ⇒ otherID(fwd, id ⇒ connectedServers += id → knownServers(id))
 
         case m @ Hello ⇒ println(s"server $nodeID present!")
 
-        case m: Forward ⇒ m match {
+        /**
+         * Received from the Master.
+         * Instructs me to go through the retirement procedure,
+         * then exit the macro-cluster
+         */
+        case m: RetireServer ⇒ retireServer(m)
 
-            /**
-             * Received from the Master.
-             * Instructs me to go through the retirement procedure,
-             * then exit the macro-cluster
-             */
-            case RetireServer(id) ⇒
-                if (isPrimary) {
-                    // TODO find another primary
-                }
-                // append a retirement-write
-                writeLog += makeWrite(Retirement(serverName))
+        /**
+         * Print my complete `writeLog` to `StdOut` in the specified format
+         */
+        case PrintLog(id) ⇒ writeLog flatMap (_.strOpt) foreach println
 
-                // TODO tell someone else of my retirement
-//                connectedServers
+        /**
+         * The Master has assigned me a logical id
+         * which is used hereafter on the command line to refer to me
+         */
+        case IDMsg(id) ⇒
+            nodeID = id
+            log info s"server id set to $nodeID"
 
-                // TODO wait for them to "ACK" it or something? Use an `?` for that?
+        /**
+         * Client has submitted new log entry that I should replicate
+         */
+        case p: Put    ⇒ appendAndSync(p)
+        case d: Delete ⇒ appendAndSync(d)
 
-                /**
-                 * context stop self --- the current msg will be the last processed before exiting
-                 * self ! PoisonPill --- first process current mailbox, then actor will exit
-                 */
-                context stop self
+        /**
+         * Send the client back the Song they requested
+         * TODO should return ERR_DEP when necessary (not sure when that IS yet)
+         */
+        case Get(clientID, songName) => sender ! getSong(songName)
 
-
-            /**
-             * Print my complete `writeLog` to `StdOut` in the specified format
-             */
-            case PrintLog(id) ⇒ writeLog flatMap (_.strOpt) foreach println
-
-            /**
-             * The Master has assigned me a logical id
-             * which is used hereafter on the command line to refer to me
-             */
-            case IDMsg(id) ⇒
-                nodeID = id
-                log info s"server id set to $nodeID"
-
-            /**
-             * Client has submitted new log entry that I should replicate
-             */
-            case p@Put(clientID, songName, url) ⇒ appendAndSync(p)
-            case d@Delete(clientID, songName) ⇒ appendAndSync(d)
-
-            /**
-             * Send the client back the Song they requested
-             * TODO should return ERR_DEP when necessary (not sure when that IS yet)
-             */
-            case Get(clientID, songName) => sender ! getSong(songName)
-
-            case _ => log error s"server wasn't expecting msg $m"
-        }
-
-        case m: Forward2 ⇒ m match {
-
-            /**
-             * "Breaking the connection" here means I never send them anything.
-             * Different nodes don't generally maintain longstanding TCP connections,
-             * they only create a socket connection when they are actively messaging each other;
-             * so there is no connection to physically break.
-             * They all remain connected to the macro-cluster at all times.
-             */
-            case fwd: BreakConnection   ⇒ otherID(fwd, connectedServers -= _)
-            case fwd: RestoreConnection ⇒ otherID(fwd, id ⇒ connectedServers += id → knownServers(id))
-        }
 
         /**
          * Received by a server who was just added to the 'macro-cluster',
          * uses this info to fully become one of the gang.
          */
-        case CreateServer(servers: Map[NodeID, ActorPath]) ⇒
-            if (servers.isEmpty) {
-                log.info("assuming I'm first server, becoming primary with name '0'")
-
-                // assume role of primary
-                isPrimary = true
-
-                // assign my name
-                // TODO could be implicit conversion String -> ServerName
-                serverName = ServerName("0")
-
-                // init my VersionVector
-                myVersionVector = VersionVector(Map(serverName → logicalClock))
-            }
-            else {
-                // save existing servers
-                connectedServers ++= servers map { case (id, path) ⇒
-                    id → getSelection(path)
-                }
-                knownServers ++= connectedServers
-
-                // tell them that I exist
-                broadcastServers(IExist(nodeID))
-
-                // TODO `ask()` one of them for a name; blocking till it is received
-
-                // TODO create version vector
-
-                // TODO assign logical clock value
-            }
+        case m: CreateServer ⇒ createServer(m)
 
         /**
          * Received by all connected servers from a new server in the macro-cluster
@@ -185,12 +206,14 @@ class Server extends PrintReceiver {
          * Sent by a client for whom this server is the only one it knows (I think).
          *
          *  Q: What about if this guy crashes?
-         *  A: Nodes cannot simply 'crash'.
+         *  A: Nodes cannot simply 'crash'
+         *
+         *  TODO I need to tell the client when I'm "retiring"
          */
         case ClientConnected ⇒ clients += sender
 
         /**
-         * Theoretically this should be taking place in a spawned child-actor (solo si tendría tiempo).
+         * Theoretically this could be taking place in a spawned child-actor (solo si tendría tiempo).
          */
         case m: AntiEntropyMsg ⇒ m match {
 
@@ -210,29 +233,9 @@ class Server extends PrintReceiver {
              * Those writes they thought I didn't know,
              * including things I knew only "tentatively" that have now "committed".
              */
-            case UpdateWrites(newWrites) ⇒
-                if (isPrimary) {
-                    writeLog ++= (newWrites map (_ commit nextCSN)) // stamp and add writes
-                    antiEntropizeAll() // propagate them out
-                }
-                else {
-                    val commits = newWrites filter (_.acceptStamp < INF)
-
-                    // update csn
-                    csn = (commits maxBy (_.acceptStamp)).acceptStamp
-
-                    // remove "tentative" writes that have "committed"
-                    val newTimestamps = (commits map (_.timestamp)).toSet
-                    writeLog = writeLog filter (newTimestamps contains _.timestamp)
-
-                    // insert all the new writes
-                    writeLog ++= newWrites
-                }
+            case m: UpdateWrites ⇒ updateWrites(m)
         }
     }
-
-    //noinspection EmptyParenMethodAccessedAsParameterless
-    override def receive: PartialFunction[Any, Unit] = printReceive
 }
 
 

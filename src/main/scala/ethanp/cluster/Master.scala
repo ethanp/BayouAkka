@@ -107,7 +107,9 @@ object Master extends App {
  *
  * TODO somehow it has to inform the CLI when this is DONE so it can stop blocking.
  */
-class Master extends PrintReceiver {
+class Master extends BayouMem {
+    override var nodeID = -1
+
     var members = Map.empty[NodeID, Member]
 
     /**
