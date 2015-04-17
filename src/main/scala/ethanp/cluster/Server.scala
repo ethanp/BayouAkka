@@ -69,6 +69,8 @@ class Server extends Actor with ActorLogging {
     //noinspection EmptyParenMethodAccessedAsParameterless
     def receive: PartialFunction[Any, Unit] = {
 
+        case m @ Hello ⇒ println(s"server $nodeID present!")
+
         case m: Forward ⇒ m match {
 
             /**
@@ -99,7 +101,9 @@ class Server extends Actor with ActorLogging {
              * The Master has assigned me a logical id
              * which is used hereafter on the command line to refer to me
              */
-            case IDMsg(id) ⇒ nodeID = id
+            case IDMsg(id) ⇒
+                nodeID = id
+                log info s"server id set to $nodeID"
 
             /**
              * Client has submitted new log entry that I should replicate

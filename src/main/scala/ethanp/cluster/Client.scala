@@ -1,6 +1,7 @@
 package ethanp.cluster
 
 import akka.actor._
+import ethanp.cluster.ClusterUtil.NodeID
 
 /**
  * Ethan Petuchowski
@@ -10,9 +11,14 @@ class Client extends Actor with ActorLogging {
 
     // TODO we're assuming client can only connect to a SINGLE server, right?
     var server: ActorSelection = _
+    var myID:   NodeID = _
 
     override def receive: PartialFunction[Any, Unit] = {
+
+        case IDMsg(id) ⇒ myID = id
+        case Hello ⇒ println(s"client $myID present!")
         case m: Forward ⇒ server forward m
+
 
         case ServerPath(path) =>
             server = ClusterUtil.getSelection(path)
