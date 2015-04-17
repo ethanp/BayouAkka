@@ -1,7 +1,7 @@
 package ethanp.cluster
 
 import akka.actor.ActorPath
-import ethanp.cluster.Common.{INF, LCValue, NodeID, URL}
+import ethanp.cluster.ClusterUtil.{INF, LCValue, NodeID, URL}
 
 import scala.collection.SortedSet
 

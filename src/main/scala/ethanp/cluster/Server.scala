@@ -1,7 +1,7 @@
 package ethanp.cluster
 
 import akka.actor._
-import ethanp.cluster.Common._
+import ethanp.cluster.ClusterUtil._
 
 import scala.collection.SortedSet
 
@@ -42,7 +42,7 @@ class Server extends Actor with ActorLogging {
         Timestamp(logicalClock, serverName)
     }
 
-    def appendAndSync(action: Action) = {
+    def appendAndSync(action: Action): Unit = {
         writeLog += makeWrite(action) // append
         antiEntropizeAll()            // sync
     }
@@ -53,7 +53,7 @@ class Server extends Actor with ActorLogging {
      */
     def antiEntropizeAll(): Unit = broadcastServers(LemmeUpgradeU)
 
-    def broadcastServers(msg: Msg) = connectedServers.values foreach (_ ! msg)
+    def broadcastServers(msg: Msg): Unit = connectedServers.values foreach (_ ! msg)
 
     /**
      * Apply `f` to the node specified in the `Forward2` who is not me
@@ -67,7 +67,7 @@ class Server extends Actor with ActorLogging {
         UpdateWrites(writeLog filter (w ⇒ (vec isNotSince w.timestamp) || w.acceptStamp > commitNo))
 
     //noinspection EmptyParenMethodAccessedAsParameterless
-    def receive = {
+    def receive: PartialFunction[Any, Unit] = {
 
         case m: Forward ⇒ m match {
 
@@ -144,7 +144,7 @@ class Server extends Actor with ActorLogging {
             else {
                 // save existing servers
                 connectedServers ++= servers map { case (id, path) ⇒
-                    id → getSelection(path, context)
+                    id → getSelection(path)
                 }
                 knownServers ++= connectedServers
 
@@ -159,7 +159,7 @@ class Server extends Actor with ActorLogging {
          * who wants to receive epidemics just like all the cool kids.
          */
         case IExist(id) ⇒
-            val serverPair = id → getSelection(sender.path, context)
+            val serverPair = id → getSelection(sender.path)
             connectedServers += serverPair
             knownServers += serverPair
 
@@ -214,5 +214,5 @@ class Server extends Actor with ActorLogging {
 
 
 object Server {
-    def main(args: Array[String]) = Common joinClusterAs "server"
+    def main(args: Array[String]): Unit = ClusterUtil joinClusterAs "server"
 }

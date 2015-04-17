@@ -8,22 +8,22 @@ import akka.actor._
  */
 class Client extends Actor with ActorLogging {
 
-  // TODO we're assuming client can only connect to a SINGLE server, right?
-  var server: ActorSelection = _
+    // TODO we're assuming client can only connect to a SINGLE server, right?
+    var server: ActorSelection = _
 
-  override def receive = {
-    case m : Forward ⇒ server forward m
+    override def receive: PartialFunction[Any, Unit] = {
+        case m: Forward ⇒ server forward m
 
-    case ServerPath(path) =>
-      server = Common.getSelection(path, context)
-      server ! ClientConnected
+        case ServerPath(path) =>
+            server = ClusterUtil.getSelection(path)
+            server ! ClientConnected
 
-    case s @ Song(name, url) ⇒ println(s.str)
+        case s@Song(name, url) ⇒ println(s.str)
 
-    case m ⇒ log.error(s"client received non-client command: $m")
-  }
+        case m ⇒ log error s"client received non-client command: $m"
+    }
 }
 
 object Client {
-  def main(args: Array[String]): Unit = Common joinClusterAs "client"
+    def main(args: Array[String]): Unit = ClusterUtil joinClusterAs "client"
 }
