@@ -4,8 +4,7 @@ import akka.actor._
 import akka.util.Timeout
 import ethanp.cluster.ClusterUtil._
 
-import scala.collection.SortedSet
-import scala.collection.mutable
+import scala.collection.{SortedSet, mutable}
 import scala.concurrent.duration._
 
 /**
@@ -28,15 +27,31 @@ class Server extends BayouMem {
 
     var clients = Set.empty[ActorRef]
     var writeLog = SortedSet.empty[Write]
-    var databaseState = Map.empty[String, URL]
+
     var connectedServers = Map.empty[NodeID, ActorSelection]
     var knownServers = Map.empty[NodeID, ActorSelection]
 
     def logicalClock: LCValue = myVV(serverName)
     def incrementMyLC(): LCValue = myVV increment serverName
-    def getSong(songName: String) = Song(songName, databaseState(songName))
 
-    def makeWrite(action: Action) = Write(INF, nextTimestamp, action)
+    /**
+      * For now instead of having a persistent state and an undo log etc, we just play through....
+      */
+    def getSong(songName: String): Song = {
+        val state = mutable.Map.empty[String, URL]
+        for (w ← writeLog) {
+            w.action match {
+                case Put(_, name, url) => state(name) = url
+                case Delete(_, name)   => state remove name
+                case _ ⇒ // ignore
+            }
+        }
+        Song(songName, state(songName))
+    }
+
+    def makeWrite(action: Action) =
+        if (isPrimary) Write(nextCSN, nextTimestamp, action)
+        else Write(INF, nextTimestamp, action)
 
     def nextCSN = {
         csn += 1
@@ -128,6 +143,9 @@ class Server extends BayouMem {
         if (isPrimary) {
             writeLog ++= (newWrites map (_ commit nextCSN)) // stamp and add writes
             antiEntropizeAll() // propagate them out
+
+            // TODO update databaseState by applying all new writes to it
+
         }
         else {
             val commits = newWrites filter (_.acceptStamp < INF)
@@ -141,25 +159,35 @@ class Server extends BayouMem {
 
             // insert all the new writes
             writeLog ++= newWrites
+
+            // TODO update databaseState
         }
     }
 
-    def addMemberToVersionVector(serverName: ServerName): Unit = {
-        myVV = ImmutableVV(myVV.vectorMap + (serverName → logicalClock))
-    }
-
     def creationWrite(): Unit = {
-        // add creation to writeLog
+
+        // get timestamp
         val write = makeWrite(CreationWrite)
+
+        // name them
         val serverName = ServerName(write.toString)
 
+        // add creation to writeLog
         writeLog += write
 
-        // add them to my version vector
-        addMemberToVersionVector(serverName)
+        // add them to the version vector
+        myVV addNewMember (serverName → logicalClock)
 
-        // reply with their new name
-        sender ! serverName
+        /**
+         * Tell Them:
+         *  1. their new name
+         *  2. my current writeLog (TODO kind-of a cheap-shot, don't'ya think?)
+         *  3. my current CSN
+         *  4. my VV
+          */
+        sender ! GangInitiation(serverName, writeLog, csn, ImmutableVV(myVV))
+
+        // TODO don't I need to send them my logical clock and state or something?
     }
 
     override def handleMsg: PartialFunction[Msg, Unit] = {
@@ -178,6 +206,11 @@ class Server extends BayouMem {
 
         case CreationWrite ⇒ creationWrite()
 
+        case GangInitiation(name, log, commNum, vv) ⇒
+            serverName  = name
+            writeLog    = log
+            csn         = commNum
+            myVV        = MutableVV(vv)
 
         case s: ServerName ⇒
 
@@ -227,9 +260,11 @@ class Server extends BayouMem {
          * Send the client back the Song they requested
          * TODO should return ERR_DEP when necessary (not sure when that IS yet)
          */
-        case Get(clientID, songName) => sender ! getSong(songName)
-
-
+        case Get(clientID, songName) =>
+            println(s"getting song $songName")
+            val song: Song = getSong(songName)
+            println(s"found song $song")
+            sender ! song
 
         /**
          * Received by all connected servers from a new server in the macro-cluster
@@ -258,7 +293,7 @@ class Server extends BayouMem {
             /**
              * Proposition from someone else that they want to update all of my knowledges.
              */
-            case LemmeUpgradeU ⇒ sender ! CurrentKnowledge(myVV, csn)
+            case LemmeUpgradeU ⇒ sender ! CurrentKnowledge(ImmutableVV(myVV), csn)
 
             /**
              * Since I know what you know,

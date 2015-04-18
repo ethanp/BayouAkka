@@ -17,7 +17,7 @@ class Client extends BayouMem {
 
         case IDMsg(id) ⇒ nodeID = id
         case Hello ⇒ println(s"client $nodeID present!")
-        case m: Forward ⇒ server forward m
+        case m: Forward ⇒ server ! m // instead of `forward` bc I want this `Client` to be the `sender`
 
 
         case ServerPath(path) =>

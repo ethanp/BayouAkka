@@ -25,13 +25,17 @@ class Test1_1(_system: ActorSystem) extends TestKit(_system) with ImplicitSender
   "An master " must {
     "send back messages unchanged" in {
 
+      Master main Array.empty
+
       Master handle "joinServer 0"
       Master handle "joinServer 1"
       Master handle "joinClient 2 0"
       Master handle "joinClient 3 1"
       Master handle "put 2 eyesOfTexas utexas.edu"
-      Master handle "stabilize"
-      Master handle "get 3 eyesOfTexas"
+
+//      Master handle "stabilize"
+//      Master handle "get 3 eyesOfTexas"
+
 
 
 //      within (200 milli) {

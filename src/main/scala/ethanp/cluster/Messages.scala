@@ -116,9 +116,7 @@ class MutableVV(val vectorMap: mutable.Map[ServerName, LCValue] = mutable.Map.em
         vectorMap(name) += 1
         vectorMap(name)
     }
-    def addMember(name: ServerName) = {
-        ??? // TODO
-    }
+    def addNewMember(tup: (ServerName, LCValue)): Unit = vectorMap(tup._1) = tup._2
 }
 
 object ImmutableVV {
@@ -128,3 +126,15 @@ object ImmutableVV {
 object MutableVV {
     def apply(imm: ImmutableVV): MutableVV = new MutableVV(mutable.Map() ++ imm.vectorMap)
 }
+
+class MutableDB(val state: mutable.Map[String, URL] = mutable.Map.empty) {
+    def update(action: Action) {
+        ??? // TODO
+    }
+}
+
+case class GangInitiation(
+         yourName: ServerName,
+         writes: immutable.SortedSet[Write],
+         csn: LCValue,
+         vsnVec: ImmutableVV) extends Msg

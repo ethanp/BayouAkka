@@ -137,6 +137,9 @@ class Master extends BayouMem {
     def broadcastClients(msg: Msg): Msg = broadcast(clients.values, msg)
     def broadcast(who: Iterable[Member], msg: Msg): Msg = { who foreach { selFromMember(_) ! msg }; msg }
 
+    /* TODO use partial function chaining to separate blocking from non-blocking calls
+     * and get rid of having "handleNext" all over the place bc that's just confusing
+     * and almost definitely incorrect. */
     override def handleMsg: PartialFunction[Msg, Unit] = {
          /* CLI Events */
         case NewServer(sid) ⇒
@@ -152,9 +155,17 @@ class Master extends BayouMem {
             broadcastAll(Hello)
             handleNext
 
-        case m @ Forward(id) ⇒ getMember(id) forward m
-        case m @ Forward2(i, j) ⇒ Seq(i, j) foreach (getMember(_) forward m)
-        case m : BrdcstServers ⇒ broadcastServers(m)
+        case m @ Forward(id) ⇒
+            getMember(id) forward m
+            handleNext
+
+        case m @ Forward2(i, j) ⇒
+            Seq(i, j) foreach (getMember(_) forward m)
+            handleNext
+
+        case m : BrdcstServers ⇒
+            broadcastServers(m)
+            handleNext
     }
 
     override def receive: PartialFunction[Any, Unit] = handleClusterCallback orElse printReceive
