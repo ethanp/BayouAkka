@@ -1,7 +1,7 @@
 package ethanp.cluster
 
 import akka.actor.ActorPath
-import ethanp.cluster.ClusterUtil.{INF, LCValue, NodeID, URL}
+import ethanp.cluster.ClusterUtil._
 
 import scala.collection.SortedSet
 import scala.collection.mutable
@@ -63,18 +63,18 @@ case class Write(commitStamp: LCValue, acceptStamp: AcceptStamp, action: Action)
 object Write {
     def apply(action: Action) = Write
 }
-case class AcceptStamp(acceptVal: LCValue, acceptor: ServerName) extends Ordered[AcceptStamp] {
-    override def compare(that: AcceptStamp): Int =
+case class AcceptStamp(acceptVal: LCValue, acceptor: ServerName) extends Msg with Ordered[AcceptStamp] {
+    override def compare(that: AcceptStamp): Int = {
         if (acceptVal != that.acceptVal) {
             acceptVal compare that.acceptVal
         }
         else {
-            acceptor compare that.acceptor
+            if (acceptor == null && that.acceptor == null) 0
+            else if (acceptor == null) -1
+            else if (that.acceptor == null) 1
+            else acceptor compare that.acceptor
         }
-}
-case class ServerName(name: String) extends Msg with Ordered[ServerName] {
-    // I think any (associative, commutative, reflexive, transitive) comparison is probably fine
-    override def compare(that: ServerName): Int = name compare that.name
+    }
 }
 
 sealed trait AntiEntropyMsg extends Msg
@@ -100,11 +100,19 @@ sealed trait VersionVector extends Ordered[VersionVector] {
     def get(serverName: ServerName): LCValue = vectorMap(serverName)
     val vectorMap: scala.collection.Map[ServerName, LCValue]
     def knowsAbout(name: ServerName) = vectorMap contains name
-    def isNotSince(ts: AcceptStamp): Boolean = {
-        def newerAcceptorThanIKnow = ??? // TODO I no longer think this would be correct
-        if (knowsAbout(ts.acceptor))
-            ts.acceptVal > vectorMap(ts.acceptor)
-        else newerAcceptorThanIKnow
+
+    def before(ts: AcceptStamp): Boolean = {
+
+        /**
+         * From (Lec 11, pg. 6)
+         *    - If `vec(R_k) ≥ TS_{k,j}`, don't forward writes ACCEPTED by R_j
+         *    - Else send R_i all writes accepted by R_j
+         *
+         * Not entirely sure this implementation is correct, I just like how clean it is.
+         */
+        def knownAndNewer = knowsAbout(ts.acceptor) && vectorMap(ts.acceptor) < ts.acceptVal
+        def unknownAndNewer = ts.acceptor != null && before(ts.acceptor)
+        knownAndNewer || unknownAndNewer
     }
     def apply(name: ServerName): LCValue = vectorMap(name)
     override def toString: String = vectorMap.toString()
@@ -113,15 +121,28 @@ case class ImmutableVV(vectorMap: immutable.Map[ServerName, LCValue] = immutable
 
 }
 class MutableVV(val vectorMap: mutable.Map[ServerName, LCValue] = mutable.Map.empty) extends VersionVector {
-    def addCreatedMembers(theirVec: VersionVector): Unit = {
-        // TODO this is what I gotta do
-    }
-
     def increment(name: ServerName): LCValue = {
         vectorMap(name) += 1
         vectorMap(name)
     }
     def addNewMember(tup: (ServerName, LCValue)): Unit = vectorMap(tup._1) = tup._2
+
+    def updateWith(writes: SortedSet[Write]): Unit = writes foreach update
+
+    /**
+     * add any created members to the VV
+     * remove any retired members from the VV
+     * update the VV for members with newer writes
+     *
+     * "R.V(X), is the largest accept-stamp of any write known to R
+     *  that was originally accepted from a client by X." (pg. 2 aka 289)
+     */
+    def update(write: Write): Unit = {
+        write.action match {
+            case CreationWrite ⇒ vectorMap(write.acceptStamp) = write.acceptStamp.acceptVal
+
+        }
+    }
 }
 
 object ImmutableVV {

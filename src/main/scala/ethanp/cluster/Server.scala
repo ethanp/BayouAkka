@@ -86,10 +86,16 @@ class Server extends BayouMem {
     def otherID[T](w: Forward2, f: NodeID ⇒ T): T = if (w.i == nodeID) f(w.j) else f(w.i)
 
     /**
+     * From (Lec 11, pg. 6)
+     * If "S" (me) finds out that R_i (`vec`s owner) doesn't know of R_j = (TS_{k,j},R_k)
+     *    - If `vec(R_k) ≥ TS_{k,j}`, don't forward writes ACCEPTED by R_j
+     *    - Else send R_i all writes accepted by R_j
+     *
      * @return all updates strictly after the given `versionVector` and commits since CSN
      */
-    def allWritesSince(vec: ImmutableVV, commitNo: LCValue): UpdateWrites =
-        UpdateWrites(writeLog filter (w ⇒ (vec isNotSince w.acceptStamp) || w.commitStamp > commitNo))
+    def allWritesSince(vec: ImmutableVV, commitNo: LCValue): UpdateWrites = {
+        UpdateWrites(writeLog filter (w ⇒ (vec before w.acceptStamp) || w.commitStamp > commitNo))
+    }
 
     def createServer(c: CreateServer) = {
         val servers = c.servers filterNot (_._1 == nodeID)
@@ -101,7 +107,7 @@ class Server extends BayouMem {
 
             // assign my name
             // TODO could be implicit conversion String -> ServerName
-            serverName = ServerName("0")
+            serverName = AcceptStamp(0, null)
 
             // init my VersionVector
             myVV = new MutableVV(mutable.Map(serverName → 0))
@@ -167,11 +173,10 @@ class Server extends BayouMem {
             writeLog ++= newWrites
         }
 
-        // TODO I need to update the VV now!
-        /* "R.V(X), is the largest accept-stamp of any write known to R
-         * that was originally accepted from a client by X." (pg. 2 aka 289) */
+        myVV updateWith newWrites
 
-        Thread sleep 300
+        Thread sleep 300 // TODO remove
+
         // propagate them out ("gossip")
         antiEntropizeAll()
     }
@@ -182,7 +187,7 @@ class Server extends BayouMem {
         val write = makeWrite(CreationWrite)
 
         // name them
-        val serverName = ServerName(write.acceptStamp.toString)
+        val serverName = write.acceptStamp
 
         // add creation to writeLog
         writeLog += write
@@ -198,8 +203,6 @@ class Server extends BayouMem {
          *  4. my VV
           */
         sender ! GangInitiation(serverName, writeLog, csn, ImmutableVV(myVV))
-
-        // TODO don't I need to send them my logical clock and state or something?
     }
 
     override def handleMsg: PartialFunction[Msg, Unit] = {
@@ -314,7 +317,6 @@ class Server extends BayouMem {
              * where I know you don't know it.
              */
             case CurrentKnowledge(vec, commitNo) ⇒
-                myVV addCreatedMembers vec // TODO not sure this is even correct
                 sender ! allWritesSince(vec, commitNo)
 
             /**

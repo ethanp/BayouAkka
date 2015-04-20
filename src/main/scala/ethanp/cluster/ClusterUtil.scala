@@ -14,6 +14,7 @@ object ClusterUtil {
     type NodeID = Int
     type LCValue = Int
     type URL = String
+    type ServerName = AcceptStamp
 
     val INF: LCValue = Integer.MAX_VALUE
 
