@@ -93,9 +93,12 @@ class Server extends BayouMem {
      *
      * @return all updates strictly after the given `versionVector` and commits since CSN
      */
-    def allWritesSince(vec: ImmutableVV, commitNo: LCValue): UpdateWrites = {
-        UpdateWrites(writeLog filter (w ⇒ (vec before w.acceptStamp) || w.commitStamp > commitNo))
-    }
+    def allWritesSince(vec: ImmutableVV, commitNo: LCValue) = UpdateWrites(
+            writeLog filter { write ⇒
+                def acceptedSince = vec before write.acceptStamp
+                def newlyCommitted = write.committed && write.commitStamp > commitNo
+                acceptedSince || newlyCommitted
+            })
 
     def createServer(c: CreateServer) = {
         val servers = c.servers filterNot (_._1 == nodeID)
@@ -155,18 +158,19 @@ class Server extends BayouMem {
         if (isPrimary) {
 
             // stamp and add writes
-            writeLog ++= newWrites.map(_ commit nextCSN)
+            writeLog ++= newWrites map (_ commit nextCSN)
         }
         else {
-            val commits = newWrites filter (_.commitStamp < INF)
+            val commits = newWrites filter (_.committed)
 
             if (commits.nonEmpty) {
                 // update csn
                 csn = (commits maxBy (_.commitStamp)).commitStamp
 
-                // remove "tentative" writes that have "committed"
+                /* remove "tentative" writes that have "committed" */
+                // find accept stamps of new writes that have committed
                 val newTimestamps = (commits map (_.acceptStamp)).toSet
-                writeLog = writeLog filter (newTimestamps contains _.acceptStamp)
+                writeLog = writeLog filter (w ⇒ w.tentative && (newTimestamps contains w.acceptStamp))
             }
 
             // insert all the new writes
@@ -312,9 +316,11 @@ class Server extends BayouMem {
             case LemmeUpgradeU ⇒ sender ! CurrentKnowledge(ImmutableVV(myVV), csn)
 
             /**
-             * Since I know what you know,
-             * I can tell you everything I know,
-             * where I know you don't know it.
+             * Bayou Haiku:
+             * ------------
+             * Tell me what you've heard,
+             * I will tell you what I know,
+             * where I know you don't.
              */
             case CurrentKnowledge(vec, commitNo) ⇒
                 sender ! allWritesSince(vec, commitNo)

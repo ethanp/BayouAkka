@@ -3,9 +3,7 @@ package ethanp.cluster
 import akka.actor.ActorPath
 import ethanp.cluster.ClusterUtil._
 
-import scala.collection.SortedSet
-import scala.collection.mutable
-import scala.collection.immutable
+import scala.collection.{SortedSet, immutable, mutable}
 
 /**
  * Ethan Petuchowski
@@ -13,7 +11,7 @@ import scala.collection.immutable
  */
 sealed class Msg() extends Serializable
 sealed trait MasterMsg extends Msg
-sealed trait Action {
+sealed trait Action extends Msg {
     def str: Option[String]
 }
 
@@ -57,8 +55,10 @@ case class Write(commitStamp: LCValue, acceptStamp: AcceptStamp, action: Action)
     override def compare(that: Write): Int = acceptStamp compare that.acceptStamp
 
     /* 'OP_TYPE:(OP_VALUE):STABLE_BOOL' */
-    def strOpt = action.str map { _ + { if (commitStamp == INF) "TRUE" else "FALSE" } }
+    def strOpt = action.str map { _ + { if (committed) "TRUE" else "FALSE" } }
     def commit(stamp: LCValue) = Write(stamp, acceptStamp, action)
+    def committed = commitStamp < INF
+    def tentative = commitStamp == INF
 }
 object Write {
     def apply(action: Action) = Write
@@ -138,9 +138,18 @@ class MutableVV(val vectorMap: mutable.Map[ServerName, LCValue] = mutable.Map.em
      *  that was originally accepted from a client by X." (pg. 2 aka 289)
      */
     def update(write: Write): Unit = {
+        val acc = write.acceptStamp.acceptor
+        val writeVal = write.acceptStamp.acceptVal
+        def maxOf() {
+            // TODO this will not work if acc doesn't exist in the vector map (does that ever happen?)
+            val currVal = vectorMap(acc)
+            if (writeVal > currVal) vectorMap(acc) = writeVal // (python style syntax works)
+        }
         write.action match {
-            case CreationWrite ⇒ vectorMap(write.acceptStamp) = write.acceptStamp.acceptVal
-
+            case m: Put        => maxOf()
+            case m: Delete     => maxOf()
+            case m: Retirement => ???
+            case CreationWrite => vectorMap(acc) = writeVal
         }
     }
 }
@@ -155,7 +164,7 @@ object MutableVV {
 
 class MutableDB(val state: mutable.Map[String, URL] = mutable.Map.empty) {
     def update(action: Action) {
-        ??? // TODO THIS IS THE NEXT THING
+        ??? // TODO (at some point)
     }
 }
 
