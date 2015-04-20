@@ -63,9 +63,7 @@ class Server extends BayouMem {
         csn
     }
 
-    def nextTimestamp = {
-        AcceptStamp(incrementMyLC(), serverName)
-    }
+    def nextTimestamp = AcceptStamp(incrementMyLC(), serverName)
 
     def appendAndSync(action: Action): Unit = {
         writeLog += makeWrite(action) // append
@@ -168,9 +166,8 @@ class Server extends BayouMem {
                 csn = (commits maxBy (_.commitStamp)).commitStamp
 
                 /* remove "tentative" writes that have "committed" */
-                // find accept stamps of new writes that have committed
                 val newTimestamps = (commits map (_.acceptStamp)).toSet
-                writeLog = writeLog filter (w ⇒ w.tentative && (newTimestamps contains w.acceptStamp))
+                writeLog = writeLog filterNot (w ⇒ w.tentative && (newTimestamps contains w.acceptStamp))
             }
 
             // insert all the new writes

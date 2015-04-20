@@ -47,39 +47,6 @@ class ServerSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSen
     this is what I have to look-up in the map!
    */
 
-  /*  TODO this can simulate EXACTLY the scenario in which my problem arises!
-
-    What remains is to figure out what the problem actually is...
-
-    Here is the system's STATE when it stops working:
-
-      server 0 present and connected to List(1)
-      server 1 present and connected to List(0, 2)
-      server 2 present and connected to List(1)
-      client 3 present!
-      client 4 present!
-      server 0 log is List(Write(1,Timestamp(1,ServerName(0)),CreationWrite), Write(2,Timestamp(2,ServerName(0)),CreationWrite))
-      server 1 log is List(Write(1,Timestamp(1,ServerName(0)),CreationWrite))
-      server 2 log is List(Write(1,Timestamp(1,ServerName(0)),CreationWrite), Write(2,Timestamp(2,ServerName(0)),CreationWrite))
-      server 0 VV is Map(ServerName(Write(1,Timestamp(1,ServerName(0)),CreationWrite)) -> 1, ServerName(Write(2,Timestamp(2,ServerName(0)),CreationWrite)) -> 2, ServerName(0) -> 2)
-      server 1 VV is Map(ServerName(Write(1,Timestamp(1,ServerName(0)),CreationWrite)) -> 1, ServerName(0) -> 1)
-      server 2 VV is Map(ServerName(Write(1,Timestamp(1,ServerName(0)),CreationWrite)) -> 1, ServerName(Write(2,Timestamp(2,ServerName(0)),CreationWrite)) -> 2, ServerName(0) -> 2)
-
-    Then what SHOULD happen is:
-
-    node 0 rcvd: Put(3,a,123)
-
-    this gets added to the state, so the log becomes
-
-      same += Write(3,Timestamp(3,ServerName(0)),Put)
-
-    and the VV becomes
-
-      same except ServerName(0) -> 3
-
-
-   */
-
   "a server actor" must {
     "set its id when told" in {
       serverRef ! IDMsg(0)
