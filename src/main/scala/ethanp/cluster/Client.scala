@@ -15,17 +15,15 @@ class Client extends BayouMem {
 
     override def handleMsg: PartialFunction[Any, Unit] = {
 
-        case IDMsg(id) ⇒ nodeID = id
-        case Hello ⇒ println(s"client $nodeID present!")
+        case IDMsg(id)  ⇒ nodeID = id
         case m: Forward ⇒ server ! m // instead of `forward` bc I want this `Client` to be the `sender`
-
+        case s @ Song(name, url) ⇒ println(s.str)
 
         case ServerPath(path) =>
-            server = ClusterUtil.getSelection(path)
+            server = ClusterUtil getSelection path
             server ! ClientConnected
 
-        case s@Song(name, url) ⇒ println(s.str)
-
+        case Hello ⇒ println(s"client $nodeID present!")
         case m ⇒ log error s"client received non-client command: $m"
     }
 }

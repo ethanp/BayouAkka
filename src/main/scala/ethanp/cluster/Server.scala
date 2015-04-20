@@ -20,6 +20,7 @@ class Server extends BayouMem {
     // TODO still need to impmt join protocol where this is assigned
     var myVV = new MutableVV
 
+    var isPaused: Boolean = false
     var isPrimary: Boolean = false
     override var nodeID: NodeID = _
     var serverName: ServerName = _
@@ -35,8 +36,11 @@ class Server extends BayouMem {
     def incrementMyLC(): LCValue = myVV increment serverName
 
     /**
-      * For now instead of having a persistent state and an undo log etc, we just play through....
-      */
+     * For now instead of having a persistent state and an undo log etc, we just play through....``
+     * TODO the easiest next-step would be to store all stable writes and only replay tentatives
+     * The final step of course is to implement the undo-log, though they don't specify that
+     * any of this is req'd in the spec....
+     */
     def getSong(songName: String): Song = {
         val state = mutable.Map.empty[String, URL]
         for (w ← writeLog) {
@@ -46,6 +50,7 @@ class Server extends BayouMem {
                 case _ ⇒ // ignore
             }
         }
+        // TODO if the song is not in there it crashes. Maybe it should be ERR_DEP or something?
         Song(songName, state(songName))
     }
 
@@ -59,7 +64,7 @@ class Server extends BayouMem {
     }
 
     def nextTimestamp = {
-        Timestamp(incrementMyLC(), serverName)
+        AcceptStamp(incrementMyLC(), serverName)
     }
 
     def appendAndSync(action: Action): Unit = {
@@ -71,7 +76,7 @@ class Server extends BayouMem {
      * Initiates anti-entropy sessions with all `connectedServers`
      * Called after writing to the `writeLog`
      */
-    def antiEntropizeAll(): Unit = broadcastServers(LemmeUpgradeU)
+    def antiEntropizeAll(): Unit = if (!isPaused) broadcastServers(LemmeUpgradeU)
 
     def broadcastServers(msg: Msg): Unit = connectedServers.values foreach (_ ! msg)
 
@@ -84,7 +89,7 @@ class Server extends BayouMem {
      * @return all updates strictly after the given `versionVector` and commits since CSN
      */
     def allWritesSince(vec: ImmutableVV, commitNo: LCValue): UpdateWrites =
-        UpdateWrites(writeLog filter (w ⇒ (vec isNotSince w.timestamp) || w.acceptStamp > commitNo))
+        UpdateWrites(writeLog filter (w ⇒ (vec isNotSince w.acceptStamp) || w.commitStamp > commitNo))
 
     def createServer(c: CreateServer) = {
         val servers = c.servers filterNot (_._1 == nodeID)
@@ -129,8 +134,6 @@ class Server extends BayouMem {
         // TODO tell someone else of my retirement
         //                connectedServers
 
-        // TODO wait for them to "ACK" it or something? Use an `?` for that?
-
         /**
          * context stop self --- the current msg will be the last processed before exiting
          * self ! PoisonPill --- first process current mailbox, then actor will exit
@@ -140,28 +143,37 @@ class Server extends BayouMem {
 
     def updateWrites(w: UpdateWrites): Unit = {
         val newWrites = w.writes
+
+        if (newWrites isEmpty) return
+
         if (isPrimary) {
-            writeLog ++= (newWrites map (_ commit nextCSN)) // stamp and add writes
-            antiEntropizeAll() // propagate them out
 
-            // TODO update databaseState by applying all new writes to it
-
+            // stamp and add writes
+            writeLog ++= newWrites.map(_ commit nextCSN)
         }
         else {
-            val commits = newWrites filter (_.acceptStamp < INF)
+            val commits = newWrites filter (_.commitStamp < INF)
 
-            // update csn
-            csn = (commits maxBy (_.acceptStamp)).acceptStamp
+            if (commits.nonEmpty) {
+                // update csn
+                csn = (commits maxBy (_.commitStamp)).commitStamp
 
-            // remove "tentative" writes that have "committed"
-            val newTimestamps = (commits map (_.timestamp)).toSet
-            writeLog = writeLog filter (newTimestamps contains _.timestamp)
+                // remove "tentative" writes that have "committed"
+                val newTimestamps = (commits map (_.acceptStamp)).toSet
+                writeLog = writeLog filter (newTimestamps contains _.acceptStamp)
+            }
 
             // insert all the new writes
             writeLog ++= newWrites
-
-            // TODO update databaseState
         }
+
+        // TODO I need to update the VV now!
+        /* "R.V(X), is the largest accept-stamp of any write known to R
+         * that was originally accepted from a client by X." (pg. 2 aka 289) */
+
+        Thread sleep 300
+        // propagate them out ("gossip")
+        antiEntropizeAll()
     }
 
     def creationWrite(): Unit = {
@@ -170,7 +182,7 @@ class Server extends BayouMem {
         val write = makeWrite(CreationWrite)
 
         // name them
-        val serverName = ServerName(write.toString)
+        val serverName = ServerName(write.acceptStamp.toString)
 
         // add creation to writeLog
         writeLog += write
@@ -202,7 +214,14 @@ class Server extends BayouMem {
         case fwd: BreakConnection   ⇒ otherID(fwd, connectedServers -= _)
         case fwd: RestoreConnection ⇒ otherID(fwd, id ⇒ connectedServers += id → knownServers(id))
 
-        case Hello ⇒ println(s"server $nodeID present!")
+        case Pause ⇒ isPaused = true
+        case Start ⇒ isPaused = false
+        case Stabilize ⇒ isPaused = false // TODO not sure how this is going to work
+
+        case Hello ⇒
+            println(s"server $nodeID present and connected to ${connectedServers.keys.toList}")
+            println(s"server $nodeID log is ${writeLog.toList}")
+            println(s"server $nodeID VV is $myVV")
 
         case CreationWrite ⇒ creationWrite()
 
@@ -216,12 +235,6 @@ class Server extends BayouMem {
 
             // "<T_{k,i}, S_k> becomes S_i’s server-id."
             serverName = s
-
-            // TODO "The new server uses (T_{k,i} + 1) to initialize its own accept-stamp counter."
-
-            // TODO retrieve sender's complete write log?
-
-            // TODO create version vector
 
 
         /**
@@ -300,7 +313,9 @@ class Server extends BayouMem {
              * I can tell you everything I know,
              * where I know you don't know it.
              */
-            case CurrentKnowledge(vec, commitNo) ⇒ sender ! allWritesSince(vec, commitNo)
+            case CurrentKnowledge(vec, commitNo) ⇒
+                myVV addCreatedMembers vec // TODO not sure this is even correct
+                sender ! allWritesSince(vec, commitNo)
 
             /**
              * Those writes they thought I didn't know,

@@ -19,7 +19,9 @@ import scala.sys.process._
  * Also the "first seed node" i.e. the one that all actors attempting
  * to join the cluster contact first.
  */
-object Master extends App {
+object Master {
+
+    def main(args: Array[String]) {}
 
     /**
      * Create a new process that will join the macro-cluster as the given type
@@ -96,6 +98,9 @@ object Master extends App {
             case "put"               ⇒ clusterKing ! Put(clientID = b1i, songName = b2, url = brkStr(3))
 
             case "hello" ⇒ clusterKing ! Hello
+            case a ⇒
+                err println s"I don't know how to $a"
+                handleNext
         }
     }
 }

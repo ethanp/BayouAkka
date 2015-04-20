@@ -20,7 +20,7 @@ class Test1_1(_system: ActorSystem) extends TestKit(_system) with ImplicitSender
 //      echo ! "hello world"
 //      expectMsg("hello world")
 
-  override def afterAll { TestKit.shutdownActorSystem(system) }
+  override def afterAll { TestKit shutdownActorSystem system }
 
   "An master " must {
     "send back messages unchanged" in {

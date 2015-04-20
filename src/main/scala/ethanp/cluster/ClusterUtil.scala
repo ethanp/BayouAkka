@@ -47,7 +47,7 @@ trait BayouMem extends Actor with ActorLogging {
     var nodeID: NodeID
     val printMsg: PartialFunction[Any, Msg] = {
         case any: Msg ⇒
-            println(s"node $nodeID rcvd $any")
+            println(s"node $nodeID rcvd: $any")
             any
     }
     def handleMsg: PartialFunction[Msg, Unit]

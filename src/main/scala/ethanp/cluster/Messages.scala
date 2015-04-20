@@ -53,20 +53,20 @@ case class  CreateServer(servers: Map[NodeID, ActorPath]) extends Administrativa
 case object ClientConnected             extends Administrativa
 case class  IExist(nodeID: NodeID)      extends Administrativa
 
-case class Write(acceptStamp: LCValue, timestamp: Timestamp, action: Action) extends Ordered[Write] {
-    override def compare(that: Write): Int = timestamp compare that.timestamp
+case class Write(commitStamp: LCValue, acceptStamp: AcceptStamp, action: Action) extends Ordered[Write] {
+    override def compare(that: Write): Int = acceptStamp compare that.acceptStamp
 
     /* 'OP_TYPE:(OP_VALUE):STABLE_BOOL' */
-    def strOpt = action.str map { _ + { if (acceptStamp == INF) "TRUE" else "FALSE" } }
-    def commit(stamp: LCValue) = Write(stamp, timestamp, action)
+    def strOpt = action.str map { _ + { if (commitStamp == INF) "TRUE" else "FALSE" } }
+    def commit(stamp: LCValue) = Write(stamp, acceptStamp, action)
 }
 object Write {
     def apply(action: Action) = Write
 }
-case class Timestamp(lcVal: LCValue, acceptor: ServerName) extends Ordered[Timestamp] {
-    override def compare(that: Timestamp): Int =
-        if (lcVal != that.lcVal) {
-            lcVal compare that.lcVal
+case class AcceptStamp(acceptVal: LCValue, acceptor: ServerName) extends Ordered[AcceptStamp] {
+    override def compare(that: AcceptStamp): Int =
+        if (acceptVal != that.acceptVal) {
+            acceptVal compare that.acceptVal
         }
         else {
             acceptor compare that.acceptor
@@ -100,18 +100,23 @@ sealed trait VersionVector extends Ordered[VersionVector] {
     def get(serverName: ServerName): LCValue = vectorMap(serverName)
     val vectorMap: scala.collection.Map[ServerName, LCValue]
     def knowsAbout(name: ServerName) = vectorMap contains name
-    def isNotSince(ts: Timestamp): Boolean = {
-        def newerAcceptorThanIKnow = ??? // TODO
+    def isNotSince(ts: AcceptStamp): Boolean = {
+        def newerAcceptorThanIKnow = ??? // TODO I no longer think this would be correct
         if (knowsAbout(ts.acceptor))
-            ts.lcVal > vectorMap(ts.acceptor)
+            ts.acceptVal > vectorMap(ts.acceptor)
         else newerAcceptorThanIKnow
     }
     def apply(name: ServerName): LCValue = vectorMap(name)
+    override def toString: String = vectorMap.toString()
 }
 case class ImmutableVV(vectorMap: immutable.Map[ServerName, LCValue] = immutable.Map.empty) extends VersionVector {
 
 }
 class MutableVV(val vectorMap: mutable.Map[ServerName, LCValue] = mutable.Map.empty) extends VersionVector {
+    def addCreatedMembers(theirVec: VersionVector): Unit = {
+        // TODO this is what I gotta do
+    }
+
     def increment(name: ServerName): LCValue = {
         vectorMap(name) += 1
         vectorMap(name)
@@ -129,12 +134,12 @@ object MutableVV {
 
 class MutableDB(val state: mutable.Map[String, URL] = mutable.Map.empty) {
     def update(action: Action) {
-        ??? // TODO
+        ??? // TODO THIS IS THE NEXT THING
     }
 }
 
 case class GangInitiation(
          yourName: ServerName,
-         writes: immutable.SortedSet[Write],
-         csn: LCValue,
-         vsnVec: ImmutableVV) extends Msg
+         writes  : immutable.SortedSet[Write],
+         csn     : LCValue,
+         vsnVec  : ImmutableVV) extends Msg
