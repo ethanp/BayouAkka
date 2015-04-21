@@ -124,6 +124,8 @@ class Master extends BayouMem {
      */
     var serverID: NodeID = -1
 
+    var stabilizeActor: ActorRef = _
+
     /** Sign me up to be notified when a member joins or is removed from the macro-cluster */
     val cluster: Cluster = Cluster(context.system)
     override def preStart(): Unit = cluster.subscribe(self, classOf[MemberUp], classOf[MemberRemoved])
@@ -175,11 +177,18 @@ class Master extends BayouMem {
 
         case Stabilize ⇒
             broadcastServers(Stabilize)
-            context actorOf Props[StabilizeActor]
+            stabilizeActor = context.actorOf(Props[StabilizeActor], name="stabilizer")
+            stabilizeActor ! Hello
             // BLOCK (no `handleNext`)
 
         case Updating ⇒
+            if (stabilizeActor != null)
+                stabilizeActor ! Updating
+            else log warning "no stabilize actor available"
 
+        case DoneStabilizing ⇒
+            broadcastServers(DoneStabilizing)
+            handleNext
     }
 
     override def receive: PartialFunction[Any, Unit] = handleClusterCallback orElse printReceive
@@ -246,21 +255,23 @@ class Master extends BayouMem {
             case "master" ⇒ handleNext
         }
     }
+}
 
-
-    /* This stuff is for Stabilize */
-    class StabilizeActor extends Actor {
-        case object ThePause
-        var hasRcvd = true
-        context.system.scheduler.schedule(1 second, 1 second, self, ThePause)
-        override def receive = {
-            case Updating ⇒ hasRcvd = true
-            case ThePause ⇒
-                if (!hasRcvd) {
-                    broadcastServers(DoneStabilizing)
-                    self ! PoisonPill
-                }
-                else hasRcvd = false
-        }
+/* This stuff is for Stabilize */
+class StabilizeActor extends Actor {
+    import context._
+    case object ThePause
+    var hasRcvd = true
+    var masterRef: ActorRef = _
+    context.system.scheduler.schedule(1 second, 1 second, self, ThePause)
+    override def receive = {
+        case Hello ⇒ masterRef = sender()
+        case Updating ⇒ hasRcvd = true
+        case ThePause ⇒
+            if (!hasRcvd) {
+                masterRef ! DoneStabilizing
+                self ! PoisonPill
+            }
+            else hasRcvd = false
     }
 }
