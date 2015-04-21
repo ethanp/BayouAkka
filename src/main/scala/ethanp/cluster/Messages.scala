@@ -33,7 +33,7 @@ case class  Put(clientID: NodeID, songName: String, url: String) extends Forward
 case class Delete(clientID: NodeID, songName: String) extends Forward(clientID) with Action {
     override def str: Option[String] = Some(s"PUT:($songName):")
 }
-case class Get(clientID: NodeID, songName: String) extends Forward(clientID)
+case class Get(clientID: NodeID, songName: String) extends Msg
 case class Song(songName: String, url: URL) extends Msg {
     def str: String = s"$songName:$url"
 }
@@ -182,3 +182,4 @@ case class GangInitiation(
 
 case object Updating extends Msg
 case object DoneStabilizing extends Msg
+case object Gotten extends Msg

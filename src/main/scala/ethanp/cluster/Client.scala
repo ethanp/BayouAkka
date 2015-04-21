@@ -11,13 +11,20 @@ class Client extends BayouMem {
 
     // TODO we're assuming client can only connect to a SINGLE server, right?
     var server: ActorSelection = _
+    var masterRef: ActorRef = _
     override var nodeID: NodeID = _
 
     override def handleMsg: PartialFunction[Any, Unit] = {
 
-        case IDMsg(id)  ⇒ nodeID = id
+        case IDMsg(id)  ⇒
+            masterRef = sender()
+            nodeID = id
+
+        case m: Get ⇒ server ! m
         case m: Forward ⇒ server ! m // instead of `forward` bc I want this `Client` to be the `sender`
-        case s @ Song(name, url) ⇒ println(s.str)
+        case s @ Song(name, url) ⇒
+            println(s.str)
+            masterRef ! Gotten
 
         case ServerPath(path) =>
             server = ClusterUtil getSelection path

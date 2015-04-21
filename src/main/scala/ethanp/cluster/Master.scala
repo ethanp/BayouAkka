@@ -125,6 +125,11 @@ class Master extends BayouMem {
     var serverID: NodeID = -1
 
     var stabilizeActor: ActorRef = _
+    var stabilizerCounter = 0
+    def nextStabilizer() = {
+        stabilizerCounter += 1
+        s"stabilizer-$stabilizerCounter"
+    }
 
     /** Sign me up to be notified when a member joins or is removed from the macro-cluster */
     val cluster: Cluster = Cluster(context.system)
@@ -167,6 +172,12 @@ class Master extends BayouMem {
             getMember(id) forward m
             handleNext
 
+        case m @ Get(id,_) ⇒
+            getMember(id) forward m
+            // BLOCK (no `handleNext`)
+
+        case Gotten ⇒ handleNext
+
         case m @ Forward2(i, j) ⇒
             Seq(i, j) foreach (getMember(_) forward m)
             handleNext
@@ -177,7 +188,7 @@ class Master extends BayouMem {
 
         case Stabilize ⇒
             broadcastServers(Stabilize)
-            stabilizeActor = context.actorOf(Props[StabilizeActor], name="stabilizer")
+            stabilizeActor = context.actorOf(Props[StabilizeActor], name = nextStabilizer())
             stabilizeActor ! Hello
             // BLOCK (no `handleNext`)
 
@@ -189,6 +200,7 @@ class Master extends BayouMem {
         case DoneStabilizing ⇒
             broadcastServers(DoneStabilizing)
             handleNext
+
     }
 
     override def receive: PartialFunction[Any, Unit] = handleClusterCallback orElse printReceive
@@ -263,7 +275,7 @@ class StabilizeActor extends Actor {
     case object ThePause
     var hasRcvd = true
     var masterRef: ActorRef = _
-    context.system.scheduler.schedule(1 second, 1 second, self, ThePause)
+    context.system.scheduler.schedule(1 second, 2 seconds, self, ThePause)
     override def receive = {
         case Hello ⇒ masterRef = sender()
         case Updating ⇒ hasRcvd = true

@@ -245,7 +245,10 @@ class Server extends BayouMem {
             isPaused = false
             antiEntropizeAll()
 
-        case Stabilize       ⇒ isStabilizing = true
+        case Stabilize ⇒
+            isStabilizing = true
+            antiEntropizeAll()
+
         case DoneStabilizing ⇒ isStabilizing = false
 
         case Hello ⇒
