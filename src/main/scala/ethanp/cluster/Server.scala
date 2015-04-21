@@ -4,8 +4,7 @@ import akka.actor._
 import akka.util.Timeout
 import ethanp.cluster.ClusterUtil._
 
-import scala.collection.immutable
-import scala.collection.{SortedSet, mutable}
+import scala.collection.{SortedSet, immutable, mutable}
 import scala.concurrent.duration._
 
 /**
@@ -26,6 +25,8 @@ class Server extends BayouMem {
     override var nodeID: NodeID = _
     var serverName: ServerName = _
     var csn: LCValue = 0
+
+    var masterRef: ActorRef = _
 
     var clients = Set.empty[ActorRef]
     var writeLog = SortedSet.empty[Write]
@@ -95,7 +96,7 @@ class Server extends BayouMem {
      */
     def allWritesSince(vec: ImmutableVV, commitNo: LCValue) = UpdateWrites(
             immutable.SortedSet.empty[Write] ++ writeLog filter { write ⇒
-                def acceptedSince = vec before write.acceptStamp
+                def acceptedSince = vec isOlderThan write.acceptStamp
                 def newlyCommitted = write.committed && write.commitStamp > commitNo
                 acceptedSince || newlyCommitted
             })
@@ -109,11 +110,12 @@ class Server extends BayouMem {
             isPrimary = true
 
             // assign my name
-            // TODO could be implicit conversion String -> ServerName
             serverName = AcceptStamp(0, null)
 
             // init my VersionVector
             myVV = new MutableVV(mutable.Map(serverName → 0))
+
+            masterRef ! IExist(nodeID)
         }
         else {
             // save existing servers
@@ -248,6 +250,7 @@ class Server extends BayouMem {
             writeLog    = log
             csn         = commNum
             myVV        = MutableVV(vv)
+            masterRef ! IExist(nodeID)
 
         case s: ServerName ⇒
 
@@ -275,9 +278,12 @@ class Server extends BayouMem {
 
         /**
          * The Master has assigned me a logical id
-         * which is used hereafter on the command line to refer to me
+         * which is used hereafter on the command line to refer to me.
+         *
+         * While we're at it, save a reference to the master
          */
         case IDMsg(id) ⇒
+            masterRef = sender()
             nodeID = id
             log info s"server id set to $nodeID"
 

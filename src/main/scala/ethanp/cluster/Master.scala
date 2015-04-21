@@ -156,6 +156,8 @@ class Master extends BayouMem {
             serverID = sid
             // BLOCK (no `handleNext`)
 
+        case IExist(id) ⇒ handleNext // a server is fully up and running, so we can unblock
+
         case Hello ⇒
             broadcastAll(Hello)
             handleNext
@@ -184,23 +186,25 @@ class Master extends BayouMem {
          *   - For Clients: send them the path to the server it should talk to
          *   - For Servers: send them the paths of all other servers so it can tell them its path
          *   - For Masters: ignore.
+         *
+         * We still don't `handleNext` until they have received the GangInitiation
          */
-        case MemberUp(m) ⇒
-            integrateNewMember(m)
-            handleNext
+        case MemberUp(m) ⇒ integrateNewMember(m)
 
         /**
          * Member has been 'officially' removed from the macro-cluster.
          * The duration we wait before marking an "unreachable" node as "down"
          * (and therefore removed) is configured by e.g. "auto-down-unreachable-after = 1s"
          */
-        case MemberRemoved(m, prevStatus) ⇒
-            removeMember(m)
-            handleNext
+        case MemberRemoved(m, prevStatus) ⇒ removeMember(m)
     }
 
     def removeMember(m: Member) { members = members filterNot { case (k, v) ⇒ m == v } }
 
+    /**
+     * we `handleNext` immediately for clients and master,
+     * but not for servers, who have to wait until an IExist is received
+     */
     def integrateNewMember(m: Member) {
         m.roles.head match {
             case "client" ⇒
@@ -218,6 +222,7 @@ class Master extends BayouMem {
                 val client = selFromMember(m)
                 client ! IDMsg(cid)
                 client ! ServerPath(getPath(members(serverID)))
+                handleNext
 
             case "server" ⇒
                 val sid: NodeID = serverID
@@ -231,7 +236,7 @@ class Master extends BayouMem {
                 server ! IDMsg(sid)
                 server ! CreateServer(serverPaths)
 
-            case "master" ⇒ log info "ignoring Master MemberUp"
+            case "master" ⇒ handleNext
         }
     }
 }

@@ -100,7 +100,7 @@ class CommitUncommittedUponReceipt extends ServerSpec() {
       assert(serverPtr.csn == 2)
     }
 
-    "having the following log" in {
+    "have the following log" in {
       assert(serverPtr.writeLog.toList == List(writeMeIn, committedPut))
     }
   }

@@ -103,7 +103,7 @@ sealed trait VersionVector extends Ordered[VersionVector] {
     val vectorMap: scala.collection.Map[ServerName, LCValue]
     def knowsAbout(name: ServerName) = vectorMap contains name
 
-    def before(ts: AcceptStamp): Boolean = {
+    def isOlderThan(ts: AcceptStamp): Boolean = {
 
         /**
          * From (Lec 11, pg. 6)
@@ -113,7 +113,7 @@ sealed trait VersionVector extends Ordered[VersionVector] {
          * Not entirely sure this implementation is correct, I just like how clean it is.
          */
         def knownAndNewer = knowsAbout(ts.acceptor) && vectorMap(ts.acceptor) < ts.acceptVal
-        def unknownAndNewer = ts.acceptor != null && before(ts.acceptor)
+        def unknownAndNewer = ts.acceptor != null && (this isOlderThan ts.acceptor)
         knownAndNewer || unknownAndNewer
     }
     def apply(name: ServerName): LCValue = vectorMap(name)
@@ -141,19 +141,19 @@ class MutableVV(val vectorMap: mutable.Map[ServerName, LCValue] = mutable.Map.em
      *  that was originally accepted from a client by X." (pg. 2 aka 289)
      */
     def update(write: Write): Unit = {
-        val acc = write.acceptStamp
-        val acceptor = acc.acceptor
-        val writeVal = acc.acceptVal
+        val stamp = write.acceptStamp
+        val acceptor = stamp.acceptor
+        val writeVal = stamp.acceptVal
 
-        def maxOf(): Unit =
-            if (before(acc))
+        def updateIfNewer(): Unit =
+            if (this isOlderThan stamp)
                 vectorMap(acceptor) = writeVal
 
         write.action match {
-            case m: Put        => maxOf()
-            case m: Delete     => maxOf()
-            case m: Retirement => ???
-            case CreationWrite => vectorMap.put(acc, writeVal)
+            case m: Put        ⇒ updateIfNewer()
+            case m: Delete     ⇒ updateIfNewer()
+            case m: Retirement ⇒ ???
+            case CreationWrite ⇒ vectorMap(stamp) = writeVal
         }
     }
 }
@@ -170,7 +170,7 @@ object MutableVV {
 
 class MutableDB(val state: mutable.Map[String, URL] = mutable.Map.empty) {
     def update(action: Action) {
-        ??? // TODO (at some point)
+        ??? // TODO (at some point?)
     }
 }
 
