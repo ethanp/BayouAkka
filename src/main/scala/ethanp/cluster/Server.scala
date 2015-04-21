@@ -17,13 +17,15 @@ class Server extends BayouMem {
 
     implicit val timeout = Timeout(5.seconds)
 
-    // TODO still need to impmt join protocol where this is assigned
-    var myVV = new MutableVV
 
-    var isPaused: Boolean = false
-    var isPrimary: Boolean = false
+    var isPaused = false
+    var hasUpdates = false
+    var isPrimary = false
+    var isStabilizing = false
+
     override var nodeID: NodeID = _
     var serverName: ServerName = _
+    var myVV = new MutableVV
     var csn: LCValue = 0
 
     var masterRef: ActorRef = _
@@ -77,7 +79,12 @@ class Server extends BayouMem {
      * Initiates anti-entropy sessions with all `connectedServers`
      * Called after writing to the `writeLog`
      */
-    def antiEntropizeAll(): Unit = if (!isPaused) broadcastServers(LemmeUpgradeU)
+    def antiEntropizeAll(): Unit =
+        if (!isPaused) {
+            broadcastServers(LemmeUpgradeU)
+            hasUpdates = false
+        }
+        else hasUpdates = true
 
     def broadcastServers(msg: Msg): Unit = connectedServers.values foreach (_ ! msg)
 
@@ -169,6 +176,8 @@ class Server extends BayouMem {
 
         if (rcvdWrites isEmpty) return
 
+        if (isStabilizing) masterRef ! Updating
+
         if (isPrimary) {
             // stamp and add writes
             writeLog ++= rcvdWrites map (_ commit nextCSN)
@@ -191,8 +200,6 @@ class Server extends BayouMem {
 
         myVV updateWith rcvdWrites
 
-        Thread sleep 300 // TODO remove
-
         // propagate them out ("gossip")
         antiEntropizeAll()
     }
@@ -214,7 +221,7 @@ class Server extends BayouMem {
         /**
          * Tell Them:
          *  1. their new name
-         *  2. my current writeLog (TODO kind-of a cheap-shot, don't'ya think?)
+         *  2. my current writeLog
          *  3. my current CSN
          *  4. my VV
           */
@@ -234,8 +241,12 @@ class Server extends BayouMem {
         case fwd: RestoreConnection ⇒ otherID(fwd, id ⇒ connectedServers += id → knownServers(id))
 
         case Pause ⇒ isPaused = true
-        case Start ⇒ isPaused = false
-        case Stabilize ⇒ isPaused = false // TODO not sure how this is going to work
+        case Start ⇒
+            isPaused = false
+            antiEntropizeAll()
+
+        case Stabilize       ⇒ isStabilizing = true
+        case DoneStabilizing ⇒ isStabilizing = false
 
         case Hello ⇒
             println(s"server $nodeID present and connected to ${connectedServers.keys.toList}")
@@ -246,10 +257,10 @@ class Server extends BayouMem {
         case CreationWrite ⇒ creationWrite()
 
         case GangInitiation(name, log, commNum, vv) ⇒
-            serverName  = name
-            writeLog    = log
-            csn         = commNum
-            myVV        = MutableVV(vv)
+            serverName = name
+            writeLog   = log
+            csn        = commNum
+            myVV       = MutableVV(vv)
             masterRef ! IExist(nodeID)
 
         case s: ServerName ⇒

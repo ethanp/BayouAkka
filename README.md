@@ -1,4 +1,3 @@
-# TODO List
 1. Am I supposed to do prefix pruning and snapshot xfers?
 2. Automated in-IDE test cases for given tests
     * At least 1 of them should assert proper resulting state as well 
@@ -161,7 +160,6 @@ And it goes a little-something like-a this:
 1. The `Client` does `server ! Put(song)`
 2. The `Server` increments its Logical Clock
 3. It appends the `Write(currentTimestamp, song)` to its `writeLog`
-4. **TODO** does it execute right now?
 
 ## Program Termination
 Since there's just a single JVM, I can just call `System exit 0`

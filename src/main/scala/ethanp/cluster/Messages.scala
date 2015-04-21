@@ -43,7 +43,7 @@ case class Retirement(serverName: ServerName) extends Action {
 
 case object Pause     extends BrdcstServers
 case object Start     extends BrdcstServers
-case object Stabilize extends BrdcstServers
+case object Stabilize extends Msg
 
 sealed trait Administrativa extends Msg
 case class  ServerPath(path: ActorPath) extends Administrativa
@@ -179,3 +179,6 @@ case class GangInitiation(
          writes  : immutable.SortedSet[Write],
          csn     : LCValue,
          vsnVec  : ImmutableVV) extends Msg
+
+case object Updating extends Msg
+case object DoneStabilizing extends Msg

@@ -7,6 +7,7 @@ import akka.cluster.ClusterEvent._
 import akka.cluster.{Cluster, Member}
 import ethanp.cluster.ClusterUtil._
 import ethanp.cluster.Master.handleNext
+import scala.concurrent.duration._
 
 import scala.sys.process._
 
@@ -107,8 +108,6 @@ object Master {
 
 /**
  * Receives command line commands from the CLI and routes them to the appropriate receivers
- *
- * TODO somehow it has to inform the CLI when this is DONE so it can stop blocking.
  */
 class Master extends BayouMem {
     override var nodeID = -1
@@ -173,6 +172,14 @@ class Master extends BayouMem {
         case m : BrdcstServers ⇒
             broadcastServers(m)
             handleNext
+
+        case Stabilize ⇒
+            broadcastServers(Stabilize)
+            context actorOf Props[StabilizeActor]
+            // BLOCK (no `handleNext`)
+
+        case Updating ⇒
+
     }
 
     override def receive: PartialFunction[Any, Unit] = handleClusterCallback orElse printReceive
@@ -237,6 +244,23 @@ class Master extends BayouMem {
                 server ! CreateServer(serverPaths)
 
             case "master" ⇒ handleNext
+        }
+    }
+
+
+    /* This stuff is for Stabilize */
+    class StabilizeActor extends Actor {
+        case object ThePause
+        var hasRcvd = true
+        context.system.scheduler.schedule(1 second, 1 second, self, ThePause)
+        override def receive = {
+            case Updating ⇒ hasRcvd = true
+            case ThePause ⇒
+                if (!hasRcvd) {
+                    broadcastServers(DoneStabilizing)
+                    self ! PoisonPill
+                }
+                else hasRcvd = false
         }
     }
 }
