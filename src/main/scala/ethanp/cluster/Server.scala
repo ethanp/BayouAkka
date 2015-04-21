@@ -4,6 +4,7 @@ import akka.actor._
 import akka.util.Timeout
 import ethanp.cluster.ClusterUtil._
 
+import scala.collection.immutable
 import scala.collection.{SortedSet, mutable}
 import scala.concurrent.duration._
 
@@ -50,8 +51,9 @@ class Server extends BayouMem {
                 case _ ⇒ // ignore
             }
         }
-        // TODO if the song is not in there it crashes. Maybe it should be ERR_DEP or something?
-        Song(songName, state(songName))
+        // TODO if the song is not in there should it be ERR_DEP or something?
+        if (state contains songName) Song(songName, state(songName))
+        else Song(songName, "NOT AVAILABLE")
     }
 
     def makeWrite(action: Action) =
@@ -92,7 +94,7 @@ class Server extends BayouMem {
      * @return all updates strictly after the given `versionVector` and commits since CSN
      */
     def allWritesSince(vec: ImmutableVV, commitNo: LCValue) = UpdateWrites(
-            writeLog filter { write ⇒
+            immutable.SortedSet.empty[Write] ++ writeLog filter { write ⇒
                 def acceptedSince = vec before write.acceptStamp
                 def newlyCommitted = write.committed && write.commitStamp > commitNo
                 acceptedSince || newlyCommitted
@@ -149,20 +151,31 @@ class Server extends BayouMem {
     }
 
     def updateWrites(w: UpdateWrites): Unit = {
-        val newWrites = w.writes
 
-        if (newWrites isEmpty) return
+        val writeLogAcceptStamps: Map[ServerName, LCValue] =
+            writeLog.toList.map(w ⇒ w.acceptStamp → w.commitStamp).toMap
+
+        // ignore anything I have verbatim, or if I have the committed version already
+        val rcvdWrites = w.writes filterNot { w ⇒
+            def haveWriteVerbatim = writeLog contains w
+            def haveMatchingAcceptStamp = writeLogAcceptStamps contains w.acceptStamp
+            def itIsCommitted = writeLogAcceptStamps(w.acceptStamp) < INF
+            def haveCommittedVersion = haveMatchingAcceptStamp && itIsCommitted
+
+            haveWriteVerbatim || haveCommittedVersion
+        }
+
+        if (rcvdWrites isEmpty) return
 
         if (isPrimary) {
-
             // stamp and add writes
-            writeLog ++= newWrites map (_ commit nextCSN)
+            writeLog ++= rcvdWrites map (_ commit nextCSN)
         }
         else {
-            val commits = newWrites filter (_.committed)
+            val commits = rcvdWrites filter (_.committed)
 
             if (commits.nonEmpty) {
-                // update csn
+                /* update csn */
                 csn = (commits maxBy (_.commitStamp)).commitStamp
 
                 /* remove "tentative" writes that have "committed" */
@@ -171,10 +184,10 @@ class Server extends BayouMem {
             }
 
             // insert all the new writes
-            writeLog ++= newWrites
+            writeLog ++= rcvdWrites
         }
 
-        myVV updateWith newWrites
+        myVV updateWith rcvdWrites
 
         Thread sleep 300 // TODO remove
 
@@ -226,6 +239,7 @@ class Server extends BayouMem {
             println(s"server $nodeID present and connected to ${connectedServers.keys.toList}")
             println(s"server $nodeID log is ${writeLog.toList}")
             println(s"server $nodeID VV is $myVV")
+            println(s"server $nodeID csn is $csn")
 
         case CreationWrite ⇒ creationWrite()
 
@@ -319,8 +333,7 @@ class Server extends BayouMem {
              * I will tell you what I know,
              * where I know you don't.
              */
-            case CurrentKnowledge(vec, commitNo) ⇒
-                sender ! allWritesSince(vec, commitNo)
+            case CurrentKnowledge(vec, commitNo) ⇒ sender ! allWritesSince(vec, commitNo)
 
             /**
              * Those writes they thought I didn't know,

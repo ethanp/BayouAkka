@@ -52,7 +52,9 @@ case object ClientConnected             extends Administrativa
 case class  IExist(nodeID: NodeID)      extends Administrativa
 
 case class Write(commitStamp: LCValue, acceptStamp: AcceptStamp, action: Action) extends Ordered[Write] {
-    override def compare(that: Write): Int = acceptStamp compare that.acceptStamp
+    override def compare(that: Write): Int =
+        if (commitStamp != that.commitStamp) commitStamp compare that.commitStamp
+        else acceptStamp compare that.acceptStamp
 
     /* 'OP_TYPE:(OP_VALUE):STABLE_BOOL' */
     def strOpt = action.str map { _ + { if (committed) "TRUE" else "FALSE" } }
@@ -116,6 +118,7 @@ sealed trait VersionVector extends Ordered[VersionVector] {
     }
     def apply(name: ServerName): LCValue = vectorMap(name)
     override def toString: String = vectorMap.toString()
+    def size = vectorMap.size
 }
 case class ImmutableVV(vectorMap: immutable.Map[ServerName, LCValue] = immutable.Map.empty) extends VersionVector {
 
@@ -138,18 +141,19 @@ class MutableVV(val vectorMap: mutable.Map[ServerName, LCValue] = mutable.Map.em
      *  that was originally accepted from a client by X." (pg. 2 aka 289)
      */
     def update(write: Write): Unit = {
-        val acc = write.acceptStamp.acceptor
-        val writeVal = write.acceptStamp.acceptVal
-        def maxOf() {
-            // TODO this will not work if acc doesn't exist in the vector map (does that ever happen?)
-            val currVal = vectorMap(acc)
-            if (writeVal > currVal) vectorMap(acc) = writeVal // (python style syntax works)
-        }
+        val acc = write.acceptStamp
+        val acceptor = acc.acceptor
+        val writeVal = acc.acceptVal
+
+        def maxOf(): Unit =
+            if (before(acc))
+                vectorMap(acceptor) = writeVal
+
         write.action match {
             case m: Put        => maxOf()
             case m: Delete     => maxOf()
             case m: Retirement => ???
-            case CreationWrite => vectorMap(acc) = writeVal
+            case CreationWrite => vectorMap.put(acc, writeVal)
         }
     }
 }
@@ -159,7 +163,9 @@ object ImmutableVV {
 }
 
 object MutableVV {
-    def apply(imm: ImmutableVV): MutableVV = new MutableVV(mutable.Map() ++ imm.vectorMap)
+    def apply(map: Map[ServerName, LCValue]): MutableVV = new MutableVV(mutable.Map() ++ map)
+    def apply(elems: (ServerName, LCValue)*): MutableVV = MutableVV(elems.toMap)
+    def apply(imm: ImmutableVV): MutableVV = MutableVV(imm.vectorMap)
 }
 
 class MutableDB(val state: mutable.Map[String, URL] = mutable.Map.empty) {

@@ -1,9 +1,11 @@
 package ethanp.cluster.actors
 
 import akka.actor.ActorSystem
-import akka.testkit.{ImplicitSender, TestKit, TestActorRef}
-import ethanp.cluster.{LemmeUpgradeU, IDMsg, Server}
+import akka.testkit.{ImplicitSender, TestActorRef, TestKit}
+import ethanp.cluster._
 import org.scalatest.{BeforeAndAfterAll, Matchers, WordSpecLike}
+
+import scala.collection.immutable.TreeSet
 
 /**
  * Ethan Petuchowski
@@ -18,6 +20,7 @@ class ServerSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSen
   // here we obtain an actual "Server" object
   val serverRef = TestActorRef[Server]
   val serverPtr = serverRef.underlyingActor
+  val primaryName: AcceptStamp = AcceptStamp(0, null)
 
   // now we can do normal unit testing with the `actor`
   // but also, messages sent to the `actorRef` are processed *synchronously*
@@ -46,15 +49,59 @@ class ServerSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSen
     if you look at what happens on an "IExist() reception in the server,
     this is what I have to look-up in the map!
    */
+}
 
-  "a server actor" must {
-    "set its id when told" in {
-      serverRef ! IDMsg(0)
-      assert(serverPtr.nodeID == 0)
+class VVUpdates extends ServerSpec() {
+
+  /* setup initial state */
+  val sName = AcceptStamp(1, primaryName)
+  serverPtr.serverName = sName
+  serverPtr.myVV = MutableVV(sName → 1, primaryName → 1)
+  serverPtr.writeLog += Write(1, sName, CreationWrite)
+  serverPtr.csn = 1
+
+  "a server receiving these updates" must {
+
+    val writeCreateTwo = Write(2, AcceptStamp(2, AcceptStamp(0, null)), CreationWrite)
+    val writePutA = Write(3, AcceptStamp(3, AcceptStamp(0, null)), Put(3, "a", "123"))
+    serverRef ! UpdateWrites(TreeSet(writeCreateTwo,writePutA))
+
+    "update its csn" in {
+      assert(serverPtr.csn == 3)
     }
-    "respond with its VV to an Anti-Entropy request" in {
-      serverRef ! LemmeUpgradeU
+    "add the writes to its writeLog" in {
+      assert(serverPtr.writeLog contains writeCreateTwo)
+      assert(serverPtr.writeLog contains writePutA)
+    }
+    "update its VV" in {
+      assert(serverPtr.myVV(sName) == 1)
+      assert(serverPtr.myVV.size == 3)
     }
   }
+}
 
+class CommitUncommittedUponReceipt extends ServerSpec() {
+  /* setup initial state */
+  val sName = AcceptStamp(1, primaryName)
+  val aPut = Put(3, "a", "123")
+  val writeMeIn = Write(1, sName, CreationWrite)
+  serverPtr.serverName = sName
+  serverPtr.myVV = MutableVV(sName → 1, primaryName → 1)
+  serverPtr.writeLog += writeMeIn
+  serverPtr.writeLog += Write(Integer.MAX_VALUE, sName, aPut)
+  serverPtr.csn = 1
+
+  "a server receiving these updates" must {
+
+    val committedPut = Write(2, sName, aPut)
+    serverRef ! UpdateWrites(TreeSet(committedPut))
+
+    "update its csn" in {
+      assert(serverPtr.csn == 2)
+    }
+
+    "having the following log" in {
+      assert(serverPtr.writeLog.toList == List(writeMeIn, committedPut))
+    }
+  }
 }
