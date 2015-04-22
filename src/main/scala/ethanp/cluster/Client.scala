@@ -11,6 +11,7 @@ class Client extends BayouMem {
 
     // TODO we're assuming client can only connect to a SINGLE server, right?
     var server: ActorSelection = _
+    var serverID: NodeID = _
     var masterRef: ActorRef = _
     override var nodeID: NodeID = _
 
@@ -26,11 +27,21 @@ class Client extends BayouMem {
             println(s.str)
             masterRef ! Gotten
 
-        case ServerPath(path) =>
+        /** TODO this should just be a selection and should use the code below
+         * This is sent by the master on memberUp(clientMember)
+         */
+        case ServerPath(id, path) =>
+            serverID = id
             server = ClusterUtil getSelection path
             server ! ClientConnected
 
-        case Hello ⇒ println(s"client $nodeID present!")
+        /** Current server is retiring, and this is the info for a new one */
+        case ServerSelection(id, sel) ⇒
+            serverID = id
+            server = sel
+            server ! ClientConnected
+
+        case Hello ⇒ println(s"client $nodeID connected to server $serverID")
         case m ⇒ log error s"client received non-client command: $m"
     }
 }

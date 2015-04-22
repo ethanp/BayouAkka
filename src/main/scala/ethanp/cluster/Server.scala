@@ -21,6 +21,7 @@ class Server extends BayouMem {
     var isPaused = false
     var hasUpdates = false
     var isPrimary = false
+    var isRetiring = false
     var isStabilizing = false
 
     override var nodeID: NodeID = _
@@ -71,6 +72,12 @@ class Server extends BayouMem {
     def nextTimestamp = AcceptStamp(incrementMyLC(), serverName)
 
     def appendAndSync(action: Action): Unit = {
+        writeLog.lastOption.map { write: Write ⇒
+            write.action match {
+                case RetireServer(_) ⇒ return // ignore
+                case _               ⇒
+            }
+        }
         writeLog += makeWrite(action) // append
         antiEntropizeAll()            // sync
     }
@@ -102,11 +109,12 @@ class Server extends BayouMem {
      * @return all updates strictly after the given `versionVector` and commits since CSN
      */
     def allWritesSince(vec: ImmutableVV, commitNo: LCValue) = UpdateWrites(
-            immutable.SortedSet.empty[Write] ++ writeLog filter { write ⇒
-                def acceptedSince = vec isOlderThan write.acceptStamp
-                def newlyCommitted = write.committed && write.commitStamp > commitNo
-                acceptedSince || newlyCommitted
-            })
+        immutable.SortedSet.empty[Write] ++ writeLog filter { write ⇒
+            def acceptedSince = vec isOlderThan write.acceptStamp
+            def newlyCommitted = write.committed && write.commitStamp > commitNo
+            acceptedSince || newlyCommitted
+        }
+    )
 
     def createServer(c: CreateServer) = {
         val servers = c.servers filterNot (_._1 == nodeID)
@@ -143,20 +151,38 @@ class Server extends BayouMem {
     }
 
     def retireServer(server: RetireServer): Unit = {
-        if (isPrimary) {
-            // TODO find another primary
-        }
-        // append a retirement-write
+
+        /* Append a retirement-write
+         * This disables future writes from being appended to the log */
         writeLog += makeWrite(Retirement(serverName))
 
-        // TODO tell someone else of my retirement
-        //                connectedServers
+        if (isPrimary) {
+            /* find another primary */
+            connectedServers.head._2 ! URPrimary
+        }
+
+        /* tell someone else of my retirement */
+        connectedServers.head._2 ! LemmeUpgradeU
+
+        isRetiring = true
+
+
+        // step down
+        isPrimary = false
 
         /**
-         * context stop self --- the current msg will be the last processed before exiting
-         * self ! PoisonPill --- first process current mailbox, then actor will exit
+         * tell my clients of a different server to connect to
+         * though if by the time the client connects the NEW server has already retired
+         * there are going to be issues. But I don't think they'll test that.
          */
-        context stop self
+        val newDaddy = connectedServers.head
+        clients foreach (_ ! ServerSelection(id=newDaddy._1, sel=newDaddy._2))
+
+        /* Different path strings I tried out before going with just sending the selection object */
+//        println(self.path)
+//        println(connectedServers.head._2.anchorPath)
+//        println(connectedServers.head._2.pathString)
+//        println(connectedServers.head._2)
     }
 
     def updateWrites(w: UpdateWrites): Unit = {
@@ -259,6 +285,8 @@ class Server extends BayouMem {
 
         case CreationWrite ⇒ creationWrite()
 
+        case URPrimary ⇒ isPrimary = true
+
         case GangInitiation(name, log, commNum, vv) ⇒
             serverName = name
             writeLog   = log
@@ -281,7 +309,8 @@ class Server extends BayouMem {
         /**
          * Received from the Master.
          * Instructs me to go through the retirement procedure,
-         * then exit the macro-cluster
+         * then exit the macro-cluster.
+         * My nodeID will never be used again.
          */
         case m: RetireServer ⇒ retireServer(m)
 
@@ -331,10 +360,10 @@ class Server extends BayouMem {
          *
          *  Q: What about if this guy crashes?
          *  A: Nodes cannot simply 'crash'
-         *
-         *  TODO I need to tell the client when I'm "retiring"
          */
-        case ClientConnected ⇒ clients += sender
+        case ClientConnected ⇒
+            clients += sender
+            masterRef ! Gotten // master unblocks on CreateClient
 
         /**
          * Theoretically this could be taking place in a spawned child-actor (solo si tendría tiempo).
@@ -353,7 +382,19 @@ class Server extends BayouMem {
              * I will tell you what I know,
              * where I know you don't.
              */
-            case CurrentKnowledge(vec, commitNo) ⇒ sender ! allWritesSince(vec, commitNo)
+            case CurrentKnowledge(vec, commitNo) ⇒
+                sender ! allWritesSince(vec, commitNo)
+                if (isRetiring) {
+
+                    /* calls `handleNext` on master waiting on retirement to complete */
+                    masterRef ! Gotten
+
+                    /*
+                     * `context stop self` --- current msg will be the last processed before exiting
+                     * `self ! PoisonPill` --- current mailbox will be processed, then actor will exit
+                     */
+                    self ! PoisonPill
+                }
 
             /**
              * Those writes they thought I didn't know,

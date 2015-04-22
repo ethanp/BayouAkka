@@ -1,6 +1,6 @@
 package ethanp.cluster
 
-import akka.actor.ActorPath
+import akka.actor.{ActorSelection, ActorPath}
 import ethanp.cluster.ClusterUtil._
 
 import scala.collection.{SortedSet, immutable, mutable}
@@ -21,7 +21,9 @@ object Forward { def unapply(fwd: Forward): Option[NodeID] = Some(fwd.i) }
 object Forward2 { def unapply(fwd: Forward2): Option[(NodeID, NodeID)] = Some(fwd.i, fwd.j) }
 
 trait BrdcstServers extends MasterMsg
-case class  RetireServer(id: NodeID)                    extends Forward(id)
+case class  RetireServer(id: NodeID) extends Action {
+    override def str: Option[String] = None
+}
 case class  BreakConnection(id1: NodeID, id2: NodeID)   extends Forward2(id1, id2)
 case class  RestoreConnection(id1: NodeID, id2: NodeID) extends Forward2(id1, id2)
 case class  PrintLog(id: NodeID)                        extends Forward(id)
@@ -46,7 +48,8 @@ case object Start     extends BrdcstServers
 case object Stabilize extends Msg
 
 sealed trait Administrativa extends Msg
-case class  ServerPath(path: ActorPath) extends Administrativa
+case class  ServerPath(id: NodeID, path: ActorPath) extends Administrativa
+case class  ServerSelection(id: NodeID, sel: ActorSelection) extends Administrativa
 case class  CreateServer(servers: Map[NodeID, ActorPath]) extends Administrativa
 case object ClientConnected             extends Administrativa
 case class  IExist(nodeID: NodeID)      extends Administrativa
@@ -152,7 +155,7 @@ class MutableVV(val vectorMap: mutable.Map[ServerName, LCValue] = mutable.Map.em
         write.action match {
             case m: Put        ⇒ updateIfNewer()
             case m: Delete     ⇒ updateIfNewer()
-            case m: Retirement ⇒ ???
+            case m: Retirement ⇒ vectorMap remove acceptor // not entirely positive about this
             case CreationWrite ⇒ vectorMap(stamp) = writeVal
         }
     }
@@ -183,3 +186,4 @@ case class GangInitiation(
 case object Updating extends Msg
 case object DoneStabilizing extends Msg
 case object Gotten extends Msg
+case object URPrimary extends Msg

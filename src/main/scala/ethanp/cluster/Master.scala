@@ -164,6 +164,20 @@ class Master extends BayouMem {
 
         case IExist(id) ⇒ handleNext // a server is fully up and running, so we can unblock
 
+        /**
+         * used to terminate blocking for the following 'distributed routines'
+         *   - GET cmd
+         *   - retirement
+         *   - create client
+         */
+        case Gotten ⇒ handleNext
+
+        case m @ RetireServer(id) ⇒
+            // remove from known servers
+            getMember(id) ! m
+            members -= id
+            // BLOCK (no `handleNext`)
+
         case Hello ⇒
             broadcastAll(Hello)
             handleNext
@@ -175,8 +189,6 @@ class Master extends BayouMem {
         case m @ Get(id,_) ⇒
             getMember(id) forward m
             // BLOCK (no `handleNext`)
-
-        case Gotten ⇒ handleNext
 
         case m @ Forward2(i, j) ⇒
             Seq(i, j) foreach (getMember(_) forward m)
@@ -249,8 +261,7 @@ class Master extends BayouMem {
                 // tell the client the server it is supposed to connect to
                 val client = selFromMember(m)
                 client ! IDMsg(cid)
-                client ! ServerPath(getPath(members(serverID)))
-                handleNext
+                client ! ServerPath(sid, getPath(members(serverID)))
 
             case "server" ⇒
                 val sid: NodeID = serverID
@@ -275,7 +286,7 @@ class StabilizeActor extends Actor {
     case object ThePause
     var hasRcvd = true
     var masterRef: ActorRef = _
-    context.system.scheduler.schedule(1 second, 2 seconds, self, ThePause)
+    system.scheduler.schedule(1 second, 2 seconds, self, ThePause)
     override def receive = {
         case Hello ⇒ masterRef = sender()
         case Updating ⇒ hasRcvd = true
