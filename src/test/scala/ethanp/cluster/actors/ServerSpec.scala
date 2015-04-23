@@ -37,7 +37,7 @@ class VVUpdates extends ServerSpec() {
   /* setup initial state */
   val sName = AcceptStamp(1, primaryName)
   serverPtr.serverName = sName
-  serverPtr.myVV = MutableVV(sName → 1, primaryName → 1)
+  serverPtr.myVersionVector = MutableVV(sName → 1, primaryName → 1)
   serverPtr.writeLog += Write(1, sName, CreationWrite)
   serverPtr.csn = 1
 
@@ -55,8 +55,8 @@ class VVUpdates extends ServerSpec() {
       assert(serverPtr.writeLog contains writePutA)
     }
     "update its VV" in {
-      assert(serverPtr.myVV(sName) == 1)
-      assert(serverPtr.myVV.size == 3)
+      assert(serverPtr.myVersionVector(sName) == 1)
+      assert(serverPtr.myVersionVector.size == 3)
     }
   }
 }
@@ -67,7 +67,7 @@ class CommitUncommittedUponReceipt extends ServerSpec() {
   val aPut = Put(3, "a", "123")
   val writeMeIn = Write(1, sName, CreationWrite)
   serverPtr.serverName = sName
-  serverPtr.myVV = MutableVV(sName → 1, primaryName → 1)
+  serverPtr.myVersionVector = MutableVV(sName → 1, primaryName → 1)
   serverPtr.writeLog += writeMeIn
   serverPtr.writeLog += Write(Integer.MAX_VALUE, sName, aPut)
   serverPtr.csn = 1

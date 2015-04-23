@@ -21,9 +21,7 @@ object Forward { def unapply(fwd: Forward): Option[NodeID] = Some(fwd.i) }
 object Forward2 { def unapply(fwd: Forward2): Option[(NodeID, NodeID)] = Some(fwd.i, fwd.j) }
 
 trait BrdcstServers extends MasterMsg
-case class  RetireServer(id: NodeID) extends Action {
-    override def str: Option[String] = None
-}
+case class  RetireServer(id: NodeID) extends Msg
 case class  BreakConnection(id1: NodeID, id2: NodeID)   extends Forward2(id1, id2)
 case class  RestoreConnection(id1: NodeID, id2: NodeID) extends Forward2(id1, id2)
 case class  PrintLog(id: NodeID)                        extends Forward(id)

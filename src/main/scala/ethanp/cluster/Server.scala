@@ -6,6 +6,7 @@ import ethanp.cluster.ClusterUtil._
 
 import scala.collection.{SortedSet, immutable, mutable}
 import scala.concurrent.duration._
+import scala.util.Random
 
 /**
  * Ethan Petuchowski
@@ -17,42 +18,120 @@ class Server extends BayouMem {
 
     implicit val timeout = Timeout(5.seconds)
 
-
+    /**
+     * Set to `true` by `Pause` from Master
+     * prevents `antiEntropizeAll()` from doing anything
+     *
+     * this would be called after receiving
+     *      1. `Put` from Client
+     *      2. `Delete` from Client
+     *      3. `UpdateWrites` from another Server
+     *
+     * On receiving `Start` from Master, this becomes `false` and we `antiEntropizeAll()`
+     */
     var isPaused = false
-    var hasUpdates = false
-    var isPrimary = false
-    var isRetiring = false
-    var isStabilizing = false
-
-    override var nodeID: NodeID = _
-    var serverName: ServerName = _
-    var myVV = new MutableVV
-    var csn: LCValue = 0
-
-    var masterRef: ActorRef = _
-
-    var clients = Set.empty[ActorRef]
-    var writeLog = SortedSet.empty[Write]
-
-    var connectedServers = Map.empty[NodeID, ActorSelection]
-    var knownServers = Map.empty[NodeID, ActorSelection]
-
-    def logicalClock: LCValue = myVV(serverName)
-    def incrementMyLC(): LCValue = myVV increment serverName
 
     /**
-     * For now instead of having a persistent state and an undo log etc, we just play through....``
+     * Set to `true` if
+     *      1. we are the first server Up
+     *      2. we receive `URPrimary` from a retiring primary
+     *
+     * It means we commit
+     *      1. `Put`s and `Delete`s from Client
+     *      2. All uncommitted incoming updates from other Servers
+     */
+    var isPrimary = false
+
+    /**
+     * When `true`, I will 'retire' (i.e. stop existing)
+     * after sending all my updates to the next Server to ask
+     */
+    var isRetiring = false
+
+    /**
+     * Made true via Master `Stabilize` msg initiated via command line
+     * When true we inform Master whenever we `antiEntropizeAll()`
+     *      so that it knows the system is still 'unstable'
+     */
+    var isStabilizing = false
+
+    /**
+     * The _Command Line_ name referring to this Server
+     */
+    override var nodeID: NodeID = _
+
+    /**
+     * The _Bayou_ name assigned by another Server in-the-know
+     */
+    var serverName: ServerName = _
+
+    /** Couldn't've said it better myself */
+    var myVersionVector = new MutableVV
+
+    /**
+     * The highest Commit Stamp Number I have seen
+     *
+     * TODO this may need better synchronization...
+     * Although actually, I think only one incoming msg gets processed at a time,
+     *      so maybe I won't have concurrency issues?
+     */
+    @volatile var csn: LCValue = 0
+
+    /**
+     * Will later be initialized to TCP address of Master
+     * who runs at a fixed address (localhost:2552)
+     * but the nodes pretend not to know that
+     */
+    var masterRef: ActorRef = _
+
+    /**
+     * Set of clients I am responsible for telling that I am retiring
+     */
+    var clients = Set.empty[ActorRef]
+
+    /**
+     * TODO how threadsafe is this? I think I need to synchronize accesses to this!
+     * Although actually, I think only one incoming msg gets processed at a time,
+     *      so maybe I won't have concurrency issues?
+     */
+    var writeLog = SortedSet.empty[Write]
+
+    /**
+     * TCP addresses of Servers I will anti-entropize, or pronounce leader when I step-down
+     */
+    var connectedServers = Map.empty[NodeID, ActorSelection]
+
+    /**
+     * All TCP addresses of any servers I have ever seen.
+     * Some of them may not be alive any more, and at this point I don't remove those.
+     */
+    var knownServers = Map.empty[NodeID, ActorSelection]
+
+    def getMyLCValue: LCValue = myVersionVector(serverName)
+    def incrementMyLC(): LCValue = myVersionVector increment serverName
+    def getRandomServer: (NodeID, ActorSelection) = Random.shuffle(connectedServers).head
+    def appendWrite(write: Write): Unit = writeLog += write
+    def appendAction(action: Action): Unit = appendWrite(makeWrite(action))
+    def greaterOf(items: LCValue*): LCValue = Seq(items:_*).max
+
+    // TODO should I just do this ALL the time, and not just when I'm `isStabilizing`?
+    def tellMasterImUnstable(): Unit = if (isStabilizing) masterRef ! Updating
+
+    /**
+     * For now instead of having a persistent state and an undo log etc, we just play through....
      * TODO the easiest next-step would be to store all stable writes and only replay tentatives
      * The final step of course is to implement the undo-log, though they don't specify that
-     * any of this is req'd in the spec....
+     *      any of this is req'd in the assignment-spec....
      */
     def getSong(songName: String): Song = {
+
+        /* "play through" log into this thing */
         val state = mutable.Map.empty[String, URL]
         for (w ← writeLog) {
             w.action match {
                 case Put(_, name, url) => state(name) = url
                 case Delete(_, name)   => state remove name
-                case _ ⇒ // ignore
+                case _ ⇒ // ignore creations and retirement writes
             }
         }
         // TODO if the song is not in there should it be ERR_DEP or something?
@@ -61,37 +140,39 @@ class Server extends BayouMem {
     }
 
     def makeWrite(action: Action) =
-        if (isPrimary) Write(nextCSN, nextTimestamp, action)
-        else Write(INF, nextTimestamp, action)
+        if (isPrimary) Write(nextCSN, nextAcceptStamp, action)
+        else Write(INF, nextAcceptStamp, action)
 
     def nextCSN = {
         csn += 1
         csn
     }
 
-    def nextTimestamp = AcceptStamp(incrementMyLC(), serverName)
+    def nextAcceptStamp = AcceptStamp(incrementMyLC(), serverName)
 
     def appendAndSync(action: Action): Unit = {
-        writeLog.lastOption.map { write: Write ⇒
+
+        /* if the last write was me retiring, ignore this (and future) write request(s) */
+        writeLog.lastOption.foreach { write: Write ⇒
             write.action match {
-                case RetireServer(_) ⇒ return // ignore
-                case _               ⇒
+                case Retirement(`serverName`) ⇒ return // ooh shiny
+                case _ ⇒
             }
         }
-        writeLog += makeWrite(action) // append
-        antiEntropizeAll()            // sync
+        appendAction(action)
+        antiEntropizeAll()
     }
 
     /**
      * Initiates anti-entropy sessions with all `connectedServers`
      * Called after writing to the `writeLog`
      */
-    def antiEntropizeAll(): Unit =
-        if (!isPaused) {
-            broadcastServers(LemmeUpgradeU)
-            hasUpdates = false
-        }
-        else hasUpdates = true
+    def antiEntropizeAll(): Unit = if (!isPaused) broadcastServers(LemmeUpgradeU)
+
+    /**
+     * will still anti-entropize even if we are `isPaused`
+     */
+    def antiEntropizeWith(actorSelection: ActorSelection): Unit = actorSelection ! LemmeUpgradeU
 
     def broadcastServers(msg: Msg): Unit = connectedServers.values foreach (_ ! msg)
 
@@ -128,7 +209,7 @@ class Server extends BayouMem {
             serverName = AcceptStamp(0, null)
 
             // init my VersionVector
-            myVV = new MutableVV(mutable.Map(serverName → 0))
+            myVersionVector = new MutableVV(mutable.Map(serverName → 0))
 
             masterRef ! IExist(nodeID)
         }
@@ -152,39 +233,40 @@ class Server extends BayouMem {
 
     def retireServer(server: RetireServer): Unit = {
 
-        /* Append a retirement-write
-         * This disables future writes from being appended to the log */
-        writeLog += makeWrite(Retirement(serverName))
+        /* This disables future writes from being appended to the log */
+        appendAction(Retirement(serverName))
 
         if (isPrimary) {
             /* find another primary */
-            connectedServers.head._2 ! URPrimary
+            getRandomServer._2 ! URPrimary
+
+            // step down
+            isPrimary = false
         }
 
-        /* tell someone else of my retirement */
-        connectedServers.head._2 ! LemmeUpgradeU
-
-        isRetiring = true
-
-
-        // step down
-        isPrimary = false
 
         /**
          * tell my clients of a different server to connect to
          * though if by the time the client connects the NEW server has already retired
          * there are going to be issues. But I don't think they'll test that.
          */
-        val newDaddy = connectedServers.head
-        clients foreach (_ ! ServerSelection(id=newDaddy._1, sel=newDaddy._2))
+        val serverGettingClients = getRandomServer
+        clients foreach (_ ! ServerSelection(id=serverGettingClients._1, sel=serverGettingClients._2))
 
-        /* Different path strings I tried out before going with just sending the selection object */
-//        println(self.path)
-//        println(connectedServers.head._2.anchorPath)
-//        println(connectedServers.head._2.pathString)
-//        println(connectedServers.head._2)
+        isRetiring = true
+
+        /* tell someone of my retirement */
+        antiEntropizeWith(getRandomServer._2)
+
+        /* NB: after they respond with their VV and I send them my updates, I will leave the cluster */
     }
 
+    /**
+     * someone sent me writes ordered after myVersionVector, so I need to
+     *  1. Ignore what I already have
+     *  2. Tell the Master that I'm "unstable"
+     *  3. Stamp writes if I'm primary
+     *  4. Accept new commits*/
     def updateWrites(w: UpdateWrites): Unit = {
 
         val writeLogAcceptStamps: Map[ServerName, LCValue] =
@@ -202,29 +284,33 @@ class Server extends BayouMem {
 
         if (rcvdWrites isEmpty) return
 
-        if (isStabilizing) masterRef ! Updating
+        tellMasterImUnstable()
 
-        if (isPrimary) {
+        /* "the first general collection consists of all elements that satisfy the predicate p
+           and the second general collection consists of all elements that don't" */
+        val (rcvdCommits, notCommitted) = rcvdWrites partition (_.committed)
+
+        if (isPrimary && notCommitted.nonEmpty) {
             // stamp and add writes
-            writeLog ++= rcvdWrites map (_ commit nextCSN)
-        }
-        else {
-            val commits = rcvdWrites filter (_.committed)
-
-            if (commits.nonEmpty) {
-                /* update csn */
-                csn = (commits maxBy (_.commitStamp)).commitStamp
-
-                /* remove "tentative" writes that have "committed" */
-                val newTimestamps = (commits map (_.acceptStamp)).toSet
-                writeLog = writeLog filterNot (w ⇒ w.tentative && (newTimestamps contains w.acceptStamp))
-            }
-
-            // insert all the new writes
-            writeLog ++= rcvdWrites
+            def newlyCommittedWrites = notCommitted map (_ commit nextCSN)
+            writeLog ++= newlyCommittedWrites
         }
 
-        myVV updateWith rcvdWrites
+        if (rcvdCommits.nonEmpty) {
+            /* update csn */
+            val highestRcvdCommitStamp = (rcvdCommits maxBy (_.commitStamp)).commitStamp
+            csn = greaterOf(csn, highestRcvdCommitStamp)
+
+            /* remove "tentative" writes that have "committed" */
+            val newTimestamps = (rcvdCommits map (_.acceptStamp)).toSet
+            writeLog = writeLog filterNot (w ⇒ w.tentative && (newTimestamps contains w.acceptStamp))
+        }
+
+        /* insert all the new writes into their proper place in the log */
+        writeLog ++= rcvdWrites
+
+        /* we're not passing the newlyCommitted version into this, but it doesn't affect anything */
+        myVersionVector updateWith rcvdWrites
 
         // propagate them out ("gossip")
         antiEntropizeAll()
@@ -232,26 +318,28 @@ class Server extends BayouMem {
 
     def creationWrite(): Unit = {
 
-        // get timestamp
-        val write = makeWrite(CreationWrite)
+        // "accept" a creation write (and commit it if `isPrimary`)
+        val creationWrite = makeWrite(CreationWrite)
 
-        // name them
-        val serverName = write.acceptStamp
+        // use it to name the new server
+        val serverName = creationWrite.acceptStamp
 
         // add creation to writeLog
-        writeLog += write
+        appendWrite(creationWrite)
 
         // add them to the version vector
-        myVV addNewMember (serverName → logicalClock)
+        myVersionVector addNewMember (serverName → getMyLCValue)
 
         /**
          * Tell Them:
          *  1. their new name
          *  2. my current writeLog
+         *          This is an 'immutable' object, but also a `var`, so I'm not sure whether
+         *          TODO I need to `synchronize` the serialization of it
          *  3. my current CSN
          *  4. my VV
-          */
-        sender ! GangInitiation(serverName, writeLog, csn, ImmutableVV(myVV))
+         */
+        sender ! GangInitiation(serverName, writeLog, csn, ImmutableVV(myVersionVector))
     }
 
     override def handleMsg: PartialFunction[Msg, Unit] = {
@@ -271,6 +359,7 @@ class Server extends BayouMem {
             isPaused = false
             antiEntropizeAll()
 
+        /* this means I will tell the master every time I receive updates from another server */
         case Stabilize ⇒
             isStabilizing = true
             antiEntropizeAll()
@@ -280,7 +369,7 @@ class Server extends BayouMem {
         case Hello ⇒
             println(s"server $nodeID present and connected to ${connectedServers.keys.toList}")
             println(s"server $nodeID log is ${writeLog.toList}")
-            println(s"server $nodeID VV is $myVV")
+            println(s"server $nodeID VV is $myVersionVector")
             println(s"server $nodeID csn is $csn")
 
         case CreationWrite ⇒ creationWrite()
@@ -291,7 +380,7 @@ class Server extends BayouMem {
             serverName = name
             writeLog   = log
             csn        = commNum
-            myVV       = MutableVV(vv)
+            myVersionVector       = MutableVV(vv)
             masterRef ! IExist(nodeID)
 
         case s: ServerName ⇒
@@ -333,8 +422,13 @@ class Server extends BayouMem {
         /**
          * Client has submitted new log entry that I should replicate
          */
-        case p: Put    ⇒ appendAndSync(p)
-        case d: Delete ⇒ appendAndSync(d)
+        case p: Put    ⇒
+            tellMasterImUnstable()
+            appendAndSync(p)
+
+        case d: Delete ⇒
+            tellMasterImUnstable()
+            appendAndSync(d)
 
         /**
          * Send the client back the Song they requested
@@ -373,7 +467,7 @@ class Server extends BayouMem {
             /**
              * Proposition from someone else that they want to update all of my knowledges.
              */
-            case LemmeUpgradeU ⇒ sender ! CurrentKnowledge(ImmutableVV(myVV), csn)
+            case LemmeUpgradeU ⇒ sender ! CurrentKnowledge(ImmutableVV(myVersionVector), csn)
 
             /**
              * Bayou Haiku:

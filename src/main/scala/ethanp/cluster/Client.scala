@@ -39,7 +39,10 @@ class Client extends BayouMem {
         case ServerSelection(id, sel) ⇒
             serverID = id
             server = sel
-            server ! ClientConnected
+
+        /* don't reply with `ClientConnected` because that will
+           make the server send an extra Gotten to Master */
+//            server ! ClientConnected
 
         case Hello ⇒ println(s"client $nodeID connected to server $serverID")
         case m ⇒ log error s"client received non-client command: $m"
