@@ -25,7 +25,7 @@ case class  RetireServer(id: NodeID) extends Msg
 case class  BreakConnection(id1: NodeID, id2: NodeID)   extends Forward2(id1, id2)
 case class  RestoreConnection(id1: NodeID, id2: NodeID) extends Forward2(id1, id2)
 case class  PrintLog(id: NodeID)                        extends Forward(id)
-case class  IDMsg(id: NodeID)                           extends Forward(id) with Administrativa
+case class  IDMsg(id: NodeID)                           extends Forward(id)
 
 case class  Put(clientID: NodeID, songName: String, url: String) extends Forward(clientID) with Action {
     override def str: Option[String] = Some(s"PUT:($songName, $url):")
@@ -45,12 +45,11 @@ case object Pause     extends BrdcstServers
 case object Start     extends BrdcstServers
 case object Stabilize extends Msg
 
-sealed trait Administrativa extends Msg
-case class  ServerPath(id: NodeID, path: ActorPath) extends Administrativa
-case class  ServerSelection(id: NodeID, sel: ActorSelection) extends Administrativa
-case class  CreateServer(servers: Map[NodeID, ActorPath]) extends Administrativa
-case object ClientConnected             extends Administrativa
-case class  IExist(nodeID: NodeID)      extends Administrativa
+case class  ServerPath(id: NodeID, path: ActorPath) extends Msg
+case class  ServerSelection(id: NodeID, sel: ActorSelection) extends Msg
+case class  CreateServer(servers: Map[NodeID, ActorPath]) extends Msg
+case class  ClientConnected(id: NodeID) extends Msg
+case class  IExist(nodeID: NodeID)      extends Msg
 
 case class Write(commitStamp: LCValue, acceptStamp: AcceptStamp, action: Action) extends Ordered[Write] {
     override def compare(that: Write): Int =
@@ -58,9 +57,9 @@ case class Write(commitStamp: LCValue, acceptStamp: AcceptStamp, action: Action)
         else acceptStamp compare that.acceptStamp
 
     /* 'OP_TYPE:(OP_VALUE):STABLE_BOOL' */
-    def strOpt = action.str map { _ + { if (committed) "TRUE" else "FALSE" } }
+    def strOpt = action.str map { _ + { if (isCommitted) "TRUE" else "FALSE" } }
     def commit(stamp: LCValue) = Write(stamp, acceptStamp, action)
-    def committed = commitStamp < INF
+    def isCommitted = commitStamp < INF
     def tentative = commitStamp == INF
 }
 object Write {

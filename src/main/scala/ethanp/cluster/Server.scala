@@ -87,7 +87,7 @@ class Server extends BayouMem {
     /**
      * Set of clients I am responsible for telling that I am retiring
      */
-    var clients = Set.empty[ActorRef]
+    var clients = Map.empty[NodeID, ActorRef]
 
     /**
      * TODO how threadsafe is this? I think I need to synchronize accesses to this!
@@ -134,9 +134,8 @@ class Server extends BayouMem {
                 case _ ⇒ // ignore creations and retirement writes
             }
         }
-        // TODO if the song is not in there should it be ERR_DEP or something?
         if (state contains songName) Song(songName, state(songName))
-        else Song(songName, "NOT AVAILABLE")
+        else Song(songName, "ERR_KEY") // see assn-spec §4.2 Get format
     }
 
     def makeWrite(action: Action) =
@@ -189,10 +188,10 @@ class Server extends BayouMem {
      *
      * @return all updates strictly after the given `versionVector` and commits since CSN
      */
-    def allWritesSince(vec: ImmutableVV, commitNo: LCValue) = UpdateWrites(
+    def allWritesSince(theirVV: ImmutableVV, theirCSN: LCValue) = UpdateWrites(
         immutable.SortedSet.empty[Write] ++ writeLog filter { write ⇒
-            def acceptedSince = vec isOlderThan write.acceptStamp
-            def newlyCommitted = write.committed && write.commitStamp > commitNo
+            def acceptedSince = theirVV isOlderThan write.acceptStamp
+            def newlyCommitted = write.isCommitted && write.commitStamp > theirCSN
             acceptedSince || newlyCommitted
         }
     )
@@ -244,19 +243,18 @@ class Server extends BayouMem {
             isPrimary = false
         }
 
-
         /**
          * tell my clients of a different server to connect to
          * though if by the time the client connects the NEW server has already retired
          * there are going to be issues. But I don't think they'll test that.
          */
         val serverGettingClients = getRandomServer
-        clients foreach (_ ! ServerSelection(id=serverGettingClients._1, sel=serverGettingClients._2))
+        clients foreach (_._2 ! ServerSelection(id=serverGettingClients._1, sel=serverGettingClients._2))
 
         isRetiring = true
 
         /* tell someone of my retirement */
-        antiEntropizeWith(getRandomServer._2)
+        antiEntropizeWith(serverGettingClients._2)
 
         /* NB: after they respond with their VV and I send them my updates, I will leave the cluster */
     }
@@ -289,7 +287,7 @@ class Server extends BayouMem {
         /* 1st: all elements satisfying the predicate
          * 2nd: all elements that don't
          */
-        val (rcvdCommits, notCommitted) = rcvdWrites partition (_.committed)
+        val (rcvdCommits, notCommitted) = rcvdWrites partition (_.isCommitted)
 
         /* incorporate received committed-writes */
         if (rcvdCommits.nonEmpty) {
@@ -342,6 +340,13 @@ class Server extends BayouMem {
          *  4. my VV
          */
         sender ! GangInitiation(serverName, writeLog, csn, ImmutableVV(myVersionVector))
+    }
+
+    def appendIfClientKnown(action: Action, clientID: NodeID) {
+        if (clients.keySet contains clientID) {
+            tellMasterImUnstable()
+            appendAndSync(action)
+        }
     }
 
     override def handleMsg: PartialFunction[Msg, Unit] = {
@@ -423,24 +428,26 @@ class Server extends BayouMem {
 
         /**
          * Client has submitted new log entry that I should replicate
+         *
+         * "There are write session guarantees that must be met.
+         *  If a server is unable to meet these write guarantees
+         *       then the write should be dropped" -- https://piazza.com/class/i5h1h4rqk9t4si?cid=90
          */
-        case p: Put ⇒
-            tellMasterImUnstable()
-            appendAndSync(p)
-
-        case d: Delete ⇒
-            tellMasterImUnstable()
-            appendAndSync(d)
+        case p @ Put(clientID, _, _) ⇒ appendIfClientKnown(p, clientID)
+        case d @ Delete(clientID, _) ⇒ appendIfClientKnown(d, clientID)
 
         /**
          * Send the client back the Song they requested
-         * TODO should return ERR_DEP when necessary (not sure when that IS yet)
+         * Returns ERR_DEP when this server doesn't know it "owns" this client yet
          */
         case Get(clientID, songName) =>
-            println(s"getting song $songName")
-            val song = getSong(songName)
-            println(s"found song $song")
-            sender ! song
+            if (clients contains clientID) {
+                log info s"getting song $songName"
+                val song = getSong(songName)
+                log info s"found song $song"
+                sender ! song
+            }
+            else sender ! Song(songName, "ERR_DEP")
 
         /**
          * Received by all connected servers from a new server in the macro-cluster
@@ -458,8 +465,8 @@ class Server extends BayouMem {
          *  Q: What about if this guy crashes?
          *  A: Nodes cannot simply 'crash'
          */
-        case ClientConnected ⇒
-            clients += sender
+        case ClientConnected(id) ⇒
+            clients += (id → sender)
             masterRef ! Gotten // master unblocks on CreateClient
 
         /**
