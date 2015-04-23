@@ -286,17 +286,14 @@ class Server extends BayouMem {
 
         tellMasterImUnstable()
 
-        /* "the first general collection consists of all elements that satisfy the predicate p
-           and the second general collection consists of all elements that don't" */
+        /* 1st: all elements satisfying the predicate
+         * 2nd: all elements that don't
+         */
         val (rcvdCommits, notCommitted) = rcvdWrites partition (_.committed)
 
-        if (isPrimary && notCommitted.nonEmpty) {
-            // stamp and add writes
-            def newlyCommittedWrites = notCommitted map (_ commit nextCSN)
-            writeLog ++= newlyCommittedWrites
-        }
-
+        /* incorporate received committed-writes */
         if (rcvdCommits.nonEmpty) {
+
             /* update csn */
             val highestRcvdCommitStamp = (rcvdCommits maxBy (_.commitStamp)).commitStamp
             csn = greaterOf(csn, highestRcvdCommitStamp)
@@ -304,15 +301,22 @@ class Server extends BayouMem {
             /* remove "tentative" writes that have "committed" */
             val newTimestamps = (rcvdCommits map (_.acceptStamp)).toSet
             writeLog = writeLog filterNot (w ⇒ w.tentative && (newTimestamps contains w.acceptStamp))
+
+            writeLog ++= rcvdCommits
         }
 
-        /* insert all the new writes into their proper place in the log */
-        writeLog ++= rcvdWrites
+        if (notCommitted.nonEmpty) {
+            /* For primary, this must happen AFTER adding rcvd commits so that csn's don't conflict.
+             * Although there may STILL be a chance for conflicts, not sure.
+             * ...I'm going to hope I don't have to worry about this.... */
+            if (isPrimary) writeLog ++= (notCommitted map (_ commit nextCSN))
+            else writeLog ++= notCommitted
+        }
 
         /* we're not passing the newlyCommitted version into this, but it doesn't affect anything */
         myVersionVector updateWith rcvdWrites
 
-        // propagate them out ("gossip")
+        /* propagate received writes if there was anything new ("gossip") */
         antiEntropizeAll()
     }
 
@@ -333,9 +337,7 @@ class Server extends BayouMem {
         /**
          * Tell Them:
          *  1. their new name
-         *  2. my current writeLog
-         *          This is an 'immutable' object, but also a `var`, so I'm not sure whether
-         *          TODO I need to `synchronize` the serialization of it
+         *  2. my current writeLog (I don't think we must synchronize for serializing this)
          *  3. my current CSN
          *  4. my VV
          */
@@ -354,23 +356,26 @@ class Server extends BayouMem {
         case fwd: BreakConnection   ⇒ otherID(fwd, connectedServers -= _)
         case fwd: RestoreConnection ⇒ otherID(fwd, id ⇒ connectedServers += id → knownServers(id))
 
+        /** prevents antiEntropization */
         case Pause ⇒ isPaused = true
+
+        /** resumes antiEntropization */
         case Start ⇒
             isPaused = false
             antiEntropizeAll()
 
-        /* this means I will tell the master every time I receive updates from another server */
+        /* tell the master upon receiving updates */
         case Stabilize ⇒
             isStabilizing = true
             antiEntropizeAll()
 
         case DoneStabilizing ⇒ isStabilizing = false
 
-        case Hello ⇒
-            println(s"server $nodeID present and connected to ${connectedServers.keys.toList}")
-            println(s"server $nodeID log is ${writeLog.toList}")
-            println(s"server $nodeID VV is $myVersionVector")
-            println(s"server $nodeID csn is $csn")
+        /** for debugging */
+        case Hello ⇒ println(s"""server $nodeID connected to ${connectedServers.keys.toList}
+                                |server $nodeID log is ${writeLog.toList}
+                                |server $nodeID VV is $myVersionVector
+                                |server $nodeID csn is $csn""".stripMargin)
 
         case CreationWrite ⇒ creationWrite()
 
@@ -380,14 +385,11 @@ class Server extends BayouMem {
             serverName = name
             writeLog   = log
             csn        = commNum
-            myVersionVector       = MutableVV(vv)
-            masterRef ! IExist(nodeID)
+            myVersionVector = MutableVV(vv)
+            masterRef  ! IExist(nodeID)
 
-        case s: ServerName ⇒
-
-            // "<T_{k,i}, S_k> becomes S_i’s server-id."
-            serverName = s
-
+        /* "<T_{k,i}, S_k> becomes S_i’s server-id." */
+        case s: ServerName ⇒ serverName = s
 
         /**
          * Received by a server who was just added to the 'macro-cluster',
@@ -422,7 +424,7 @@ class Server extends BayouMem {
         /**
          * Client has submitted new log entry that I should replicate
          */
-        case p: Put    ⇒
+        case p: Put ⇒
             tellMasterImUnstable()
             appendAndSync(p)
 
@@ -436,7 +438,7 @@ class Server extends BayouMem {
          */
         case Get(clientID, songName) =>
             println(s"getting song $songName")
-            val song: Song = getSong(songName)
+            val song = getSong(songName)
             println(s"found song $song")
             sender ! song
 
@@ -445,12 +447,13 @@ class Server extends BayouMem {
          * who wants to receive epidemics just like all the cool kids.
          */
         case IExist(id) ⇒
-            val serverPair = id → getSelection(sender.path)
+            // I think the paren's are just there to remind you NOT to "close over" the `sender()`
+            val serverPair = id → getSelection(sender().path)
             connectedServers += serverPair
             knownServers += serverPair
 
         /**
-         * Sent by a client for whom this server is the only one it knows (I think).
+         * Sent by a client for whom this server is the only one it knows.
          *
          *  Q: What about if this guy crashes?
          *  A: Nodes cannot simply 'crash'
@@ -460,42 +463,38 @@ class Server extends BayouMem {
             masterRef ! Gotten // master unblocks on CreateClient
 
         /**
-         * Theoretically this could be taking place in a spawned child-actor (solo si tendría tiempo).
+         * Proposition from someone else that they want to update all of my knowledges.
+         * So I gotta tell em where I'm at.
          */
-        case m: AntiEntropyMsg ⇒ m match {
+        case LemmeUpgradeU ⇒ sender ! CurrentKnowledge(ImmutableVV(myVersionVector), csn)
 
-            /**
-             * Proposition from someone else that they want to update all of my knowledges.
-             */
-            case LemmeUpgradeU ⇒ sender ! CurrentKnowledge(ImmutableVV(myVersionVector), csn)
+        /**
+         * Bayou Haiku:
+         * ------------
+         * Tell me what you've heard,
+         * I will tell you what I know,
+         * where I know you don't.
+         */
+        case CurrentKnowledge(vec, commitNo) ⇒
+            sender ! allWritesSince(vec, commitNo)
+            if (isRetiring) {
 
-            /**
-             * Bayou Haiku:
-             * ------------
-             * Tell me what you've heard,
-             * I will tell you what I know,
-             * where I know you don't.
-             */
-            case CurrentKnowledge(vec, commitNo) ⇒
-                sender ! allWritesSince(vec, commitNo)
-                if (isRetiring) {
+                /* calls `handleNext` on master waiting on retirement to complete */
+                masterRef ! Gotten
 
-                    /* calls `handleNext` on master waiting on retirement to complete */
-                    masterRef ! Gotten
+                /*
+                 * `context stop self` --- current msg will be the last processed before exiting
+                 * `self ! PoisonPill` --- current mailbox will be processed, then actor will exit
+                 */
+                self ! PoisonPill
+            }
 
-                    /*
-                     * `context stop self` --- current msg will be the last processed before exiting
-                     * `self ! PoisonPill` --- current mailbox will be processed, then actor will exit
-                     */
-                    self ! PoisonPill
-                }
-
-            /**
-             * Those writes they thought I didn't know,
-             * including things I knew only "tentatively" that have now "committed".
-             */
-            case m: UpdateWrites ⇒ updateWrites(m)
-        }
+        /**
+         * Those writes they thought I didn't know,
+         * including things I knew only "tentatively" that have now "committed".
+         * May also include things I already know by now (those get filtered out).
+         */
+        case m: UpdateWrites ⇒ updateWrites(m)
     }
 }
 
