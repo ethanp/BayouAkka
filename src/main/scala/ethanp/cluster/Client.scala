@@ -13,7 +13,7 @@ class Client extends BayouMem {
     var server: ActorSelection = _
     var serverID: NodeID = _
     var masterRef: ActorRef = _
-    override var nodeID: NodeID = _
+    override var nodeID: NodeID = -4 // "unset"
 
     override def handleMsg: PartialFunction[Any, Unit] = {
 
@@ -33,7 +33,7 @@ class Client extends BayouMem {
         case ServerPath(id, path) =>
             serverID = id
             server = ClusterUtil getSelection path
-            server ! ClientConnected
+            server ! ClientConnected(nodeID)
 
         /** Current server is retiring, and this is the info for a new one */
         case ServerSelection(id, sel) ⇒

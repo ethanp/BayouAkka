@@ -113,8 +113,6 @@ class Server extends BayouMem {
     def appendWrite(write: Write): Unit = writeLog += write
     def appendAction(action: Action): Unit = appendWrite(makeWrite(action))
     def greaterOf(items: LCValue*): LCValue = Seq(items:_*).max
-
-    // TODO should I just do this ALL the time, and not just when I'm `isStabilizing`?
     def tellMasterImUnstable(): Unit = if (isStabilizing) masterRef ! Updating
 
     /**
@@ -138,28 +136,22 @@ class Server extends BayouMem {
         else Song(songName, "ERR_KEY") // see assn-spec §4.2 Get format
     }
 
-    def makeWrite(action: Action) =
-        if (isPrimary) Write(nextCSN, nextAcceptStamp, action)
-        else Write(INF, nextAcceptStamp, action)
+    def makeWrite(action: Action): Write =
+        if (isPrimary) Write(nextCSN(), nextAcceptStamp(), action)
+        else Write(INF, nextAcceptStamp(), action)
 
-    def nextCSN = {
+    def nextCSN(): LCValue = {
         csn += 1
         csn
     }
 
-    def nextAcceptStamp = AcceptStamp(incrementMyLC(), serverName)
+    def nextAcceptStamp() = AcceptStamp(incrementMyLC(), serverName)
 
     def appendAndSync(action: Action): Unit = {
-
-        /* if the last write was me retiring, ignore this (and future) write request(s) */
-        writeLog.lastOption.foreach { write: Write ⇒
-            write.action match {
-                case Retirement(`serverName`) ⇒ return // ooh shiny
-                case _ ⇒
-            }
+        if (!isRetiring) {
+            appendAction(action)
+            antiEntropizeAll()
         }
-        appendAction(action)
-        antiEntropizeAll()
     }
 
     /**
@@ -377,10 +369,15 @@ class Server extends BayouMem {
         case DoneStabilizing ⇒ isStabilizing = false
 
         /** for debugging */
-        case Hello ⇒ println(s"""server $nodeID connected to ${connectedServers.keys.toList}
-                                |server $nodeID log is ${writeLog.toList}
-                                |server $nodeID VV is $myVersionVector
-                                |server $nodeID csn is $csn""".stripMargin)
+        case Hello ⇒
+            println(s"""server $nodeID
+                       |--------------
+                       |connected servers: ${connectedServers.keys.toList}
+                       |connected clients: ${clients.keys.toList}
+                       |log: ${writeLog.toList}
+                       |VV: $myVersionVector
+                       |csn: $csn"""
+                    .stripMargin)
 
         case CreationWrite ⇒ creationWrite()
 
@@ -486,19 +483,19 @@ class Server extends BayouMem {
             sender ! allWritesSince(vec, commitNo)
             if (isRetiring) {
 
-                /* calls `handleNext` on master waiting on retirement to complete */
+                /* unblocks Master waiting on my retirement to complete */
                 masterRef ! Gotten
 
-                /*
-                 * `context stop self` --- current msg will be the last processed before exiting
-                 * `self ! PoisonPill` --- current mailbox will be processed, then actor will exit
+                /* Akka API gives two options for leaving the Cluster:
+                 *   `context stop self` --- exit when `receive` method returns
+                 *   `self ! PoisonPill` --- append PoisonPill to mailbox, exit upon receipt
                  */
                 self ! PoisonPill
             }
 
         /**
          * Those writes they thought I didn't know,
-         * including things I knew only "tentatively" that have now "committed".
+         *   including things I knew only "tentatively" that have now "committed".
          * May also include things I already know by now (those get filtered out).
          */
         case m: UpdateWrites ⇒ updateWrites(m)

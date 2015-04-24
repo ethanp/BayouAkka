@@ -13,6 +13,8 @@ libraryDependencies ++= Seq(
   "org.scalatest" %% "scalatest" % "2.2.2" % "test"
 )
 
+logLevel in compile := Level.Error
+
 TaskKey[Unit]("execClient") := (runMain in Compile).toTask(" ethanp.cluster.Client").value
 
 TaskKey[Unit]("execServer") := (runMain in Compile).toTask(" ethanp.cluster.Server").value

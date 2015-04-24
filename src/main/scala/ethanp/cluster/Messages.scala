@@ -184,3 +184,4 @@ case object Updating extends Msg
 case object DoneStabilizing extends Msg
 case object Gotten extends Msg
 case object URPrimary extends Msg
+case object KillEmAll extends Msg

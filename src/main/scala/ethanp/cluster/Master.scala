@@ -28,9 +28,8 @@ object Master {
      * Create a new process that will join the macro-cluster as the given type
      * @return the process reference
      */
-    def createClientProc(): Process = s"sbt execClient".run()
-
-    def createServerProc(): Process = s"sbt execServer".run()
+    def createClientProc(): Process = s"sbt --warn execClient".run()
+    def createServerProc(): Process = s"sbt --warn execServer".run()
 
     /**
      * Create a new Client Actor (inside this process) that will join the macro-cluster.
@@ -69,7 +68,8 @@ object Master {
      */
     def handleNext: Unit = {
         println("handling next")
-        handle(sc nextLine)
+        if (sc.hasNextLine) handle(sc.nextLine)
+        else clusterKing ! KillEmAll
     }
 
     /**
@@ -147,6 +147,7 @@ class Master extends BayouMem {
     def broadcastServers(msg: Msg): Msg = broadcast(servers.values, msg)
     def broadcastClients(msg: Msg): Msg = broadcast(clients.values, msg)
     def broadcast(who: Iterable[Member], msg: Msg): Msg = { who foreach { selFromMember(_) ! msg }; msg }
+    def killEmAll(): Unit = members.values foreach { selFromMember(_) ! PoisonPill }
 
     /* TODO use partial function chaining to separate blocking from non-blocking calls
      * and get rid of having "handleNext" all over the place bc that's just confusing
@@ -173,14 +174,24 @@ class Master extends BayouMem {
         case Gotten ⇒ handleNext
 
         case m @ RetireServer(id) ⇒
-            // remove from known servers
             getMember(id) ! m
+
+            // kick them out of the cluster
+            Cluster.get(context.system).leave(members(id).address)
+
+            // remove from known servers
             members -= id
+
             // BLOCK (no `handleNext`)
 
         case Hello ⇒
             broadcastAll(Hello)
             handleNext
+
+        case KillEmAll ⇒
+            // kick everyone out of the cluster
+            members.values foreach { m ⇒ Cluster.get(context.system).leave(m.address) }
+            System exit 0
 
         case m @ Forward(id) ⇒
             getMember(id) forward m
@@ -254,7 +265,7 @@ class Master extends BayouMem {
                 if (cid == -1) { err println "cid hasn't been set"; return }
                 if (sid == -1) { err println "sid hasn't been set"; return }
                 if (members contains cid) { err println s"Node $cid already exists"; return }
-                if (!(members contains sid)) { err println s"Node $sid doesn't exist"; return }
+                if (!(members contains sid)) { err println s"Server $sid doesn't exist"; return }
 
                 members += (cid → m) // save reference to this member
 
