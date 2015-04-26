@@ -45,6 +45,9 @@ class Client extends BayouMem {
 //            server ! ClientConnected
 
         case Hello ⇒ println(s"client $nodeID connected to server $serverID")
+
+        case KillEmAll ⇒ context.system.shutdown()
+
         case m ⇒ log error s"client received non-client command: $m"
     }
 }

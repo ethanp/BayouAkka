@@ -67,7 +67,7 @@ object Master {
      * in the callback handler, we try to handle the next line
      */
     def handleNext: Unit = {
-        println("handling next")
+        printIf("handling next")
         if (sc.hasNextLine) handle(sc.nextLine)
         else clusterKing ! KillEmAll
     }
@@ -79,7 +79,7 @@ object Master {
     def handle(str: String): Unit = {
 
         val brkStr = str split " "
-        println(s"handling { $str }")
+        printIf(s"handling { $str }")
         lazy val b1 = brkStr(1) // 'lazy' because element does not exist unless it is needed
         lazy val b2 = brkStr(2)
         lazy val b1i = b1.toInt
@@ -98,10 +98,12 @@ object Master {
             case "delete"            ⇒ clusterKing ! Delete(clientID = b1i, songName = b2)
             case "put"               ⇒ clusterKing ! Put(clientID = b1i, songName = b2, url = brkStr(3))
 
+            case "shutdown" ⇒ clusterKing ! KillEmAll
             case "hello" ⇒ clusterKing ! Hello
             case a ⇒
                 err println s"I don't know how to $a"
                 handleNext
+
         }
     }
 }
@@ -189,9 +191,15 @@ class Master extends BayouMem {
             handleNext
 
         case KillEmAll ⇒
-            // kick everyone out of the cluster
-            members.values foreach { m ⇒ Cluster.get(context.system).leave(m.address) }
-            System exit 0
+
+            /* `system.shutdown()` "will stop the guardian actor,
+             * which in turn will recursively stop all its child actors,
+             * then the system guardian (below which the logging actors reside)
+             * and the execute all registered termination handlers"
+             */
+            members.keys foreach { getMember(_) ! KillEmAll }
+            context.system.shutdown()
+
 
         case m @ Forward(id) ⇒
             getMember(id) forward m

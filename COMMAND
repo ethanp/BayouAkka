@@ -1,1 +1,1 @@
-sbt --warn "runMain ethanp.cluster.Master"
+sbt --error "runMain ethanp.cluster.Master" | grep -v success

@@ -120,9 +120,11 @@ sealed trait VersionVector extends Ordered[VersionVector] {
     override def toString: String = vectorMap.toString()
     def size = vectorMap.size
 }
+
 case class ImmutableVV(vectorMap: immutable.Map[ServerName, LCValue] = immutable.Map.empty) extends VersionVector {
 
 }
+
 class MutableVV(val vectorMap: mutable.Map[ServerName, LCValue] = mutable.Map.empty) extends VersionVector {
     def increment(name: ServerName): LCValue = {
         vectorMap(name) += 1

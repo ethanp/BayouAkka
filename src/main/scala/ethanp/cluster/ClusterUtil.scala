@@ -18,6 +18,9 @@ object ClusterUtil {
 
     val INF: LCValue = Integer.MAX_VALUE
 
+    val logCommands = false
+    def printIf(x: Any) { if (logCommands) println(x) }
+
     def joinClusterAs(role: String): ActorRef = ClusterUtil.joinClusterAs("0", role)
 
     def joinClusterAs(port: String, role: String): ActorRef = {
@@ -46,7 +49,12 @@ object ClusterUtil {
 
 trait BayouMem extends Actor with ActorLogging {
     var nodeID: NodeID
-    val pMsg = true
+
+    /**
+     * `true` makes nodes log incoming messages
+     */
+    val pMsg = false
+
     def logMsg(x: Any) { if (pMsg) println(x) }
     val printMsg: PartialFunction[Any, Msg] = {
         case any: Msg ⇒

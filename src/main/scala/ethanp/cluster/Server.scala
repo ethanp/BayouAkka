@@ -446,6 +446,8 @@ class Server extends BayouMem {
             }
             else sender ! Song(songName, "ERR_DEP")
 
+        case KillEmAll ⇒ context.system.shutdown()
+
         /**
          * Received by all connected servers from a new server in the macro-cluster
          * who wants to receive epidemics just like all the cool kids.
