@@ -21,8 +21,17 @@ class Client extends BayouMem {
             masterRef = sender()
             nodeID = id
 
+
         case m: Get ⇒ server ! m
-        case m: Forward ⇒ server ! m // instead of `forward` bc I want this `Client` to be the `sender`
+
+        /** MUST (I think) be before other `Forward` types... */
+        case m: PutAndDelete ⇒
+            server ! m
+            masterRef ! Gotten
+
+        case m: IDMsg ⇒ server ! m // instead of `forward` bc I want this `Client` to be the `sender`
+
+        /** reply from Server for Get request */
         case s @ Song(name, url) ⇒
             println(s.str)
             masterRef ! Gotten

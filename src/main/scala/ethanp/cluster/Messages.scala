@@ -15,22 +15,22 @@ sealed trait Action extends Msg {
     def str: Option[String]
 }
 
-class Forward(val i: NodeID) extends MasterMsg
 class NetworkPartition(val i: NodeID, val j: NodeID) extends MasterMsg
-object Forward { def unapply(fwd: Forward): Option[NodeID] = Some(fwd.i) }
 object NetworkPartition { def unapply(fwd: NetworkPartition): Option[(NodeID, NodeID)] = Some(fwd.i, fwd.j) }
+abstract class PutAndDelete(val i: NodeID) extends Action
+object PutAndDelete { def unapply(pad: PutAndDelete): Option[NodeID] = Some(pad.i) }
 
 trait BrdcstServers extends MasterMsg
 case class  RetireServer(id: NodeID) extends Msg
 case class  BreakConnection(id1: NodeID, id2: NodeID)   extends NetworkPartition(id1, id2)
 case class  RestoreConnection(id1: NodeID, id2: NodeID) extends NetworkPartition(id1, id2)
-case class  PrintLog(id: NodeID)                        extends Forward(id)
-case class  IDMsg(id: NodeID)                           extends Forward(id)
+case class  IDMsg(id: NodeID) extends Msg
+case class  PrintLog(id: NodeID) extends Msg
 
-case class  Put(clientID: NodeID, songName: String, url: String) extends Forward(clientID) with Action {
+case class  Put(clientID: NodeID, songName: String, url: String) extends PutAndDelete(clientID) {
     override def str: Option[String] = Some(s"PUT:($songName, $url):")
 }
-case class Delete(clientID: NodeID, songName: String) extends Forward(clientID) with Action {
+case class Delete(clientID: NodeID, songName: String) extends PutAndDelete(clientID) {
     override def str: Option[String] = Some(s"PUT:($songName):")
 }
 case class Get(clientID: NodeID, songName: String) extends Msg

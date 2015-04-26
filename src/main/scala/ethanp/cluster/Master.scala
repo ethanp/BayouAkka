@@ -200,14 +200,22 @@ class Master extends BayouMem {
             members.keys foreach { getMember(_) ! KillEmAll }
             context.system.shutdown()
 
+        case m @ PutAndDelete(id) ⇒
+            getMember(id) forward m
+            // wait for Gotten from Client (should be real quick)
 
-        case m @ Forward(id) ⇒
+        case m @ PrintLog(id) ⇒
+            getMember(id) forward m
+            // wait for Gotten from Server after having printed
+
+        /* I don't think this will ever actually be called... */
+        case m @ IDMsg(id) ⇒
             getMember(id) forward m
             handleNext
 
         case m @ Get(id,_) ⇒
             getMember(id) forward m
-            // BLOCK (no `handleNext`)
+            // wait for Gotten from Client receiving Song from Server
 
         /**
          * Either the creation or removal of a broken connection

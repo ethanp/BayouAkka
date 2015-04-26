@@ -419,7 +419,9 @@ class Server extends BayouMem {
         /**
          * Print my complete `writeLog` to `StdOut` in the specified format
          */
-        case PrintLog(id) ⇒ writeLog flatMap (_.strOpt) foreach println
+        case PrintLog(id) ⇒
+            writeLog flatMap (_.strOpt) foreach println
+            masterRef ! Gotten
 
         /**
          * The Master has assigned me a logical id
