@@ -3,7 +3,7 @@ package ethanp.cluster
 import akka.actor._
 import akka.cluster.Member
 import com.typesafe.config.ConfigFactory
-import ethanp.cluster.ClusterUtil.NodeID
+import ethanp.cluster.ClusterUtil.{logging, NodeID}
 
 /**
  * Ethan Petuchowski
@@ -18,8 +18,8 @@ object ClusterUtil {
 
     val INF: LCValue = Integer.MAX_VALUE
 
-    val logCommands = false
-    def printIf(x: Any) { if (logCommands) println(x) }
+    val logging = true
+    def printIf(x: Any) { if (logging) println(x) }
 
     def joinClusterAs(role: String): ActorRef = ClusterUtil.joinClusterAs("0", role)
 
@@ -51,11 +51,9 @@ trait BayouMem extends Actor with ActorLogging {
     var nodeID: NodeID
 
     /**
-     * `true` makes nodes log incoming messages
+     * `logging` can be set in the ClusterUtil above
      */
-    val pMsg = false
-
-    def logMsg(x: Any) { if (pMsg) println(x) }
+    def logMsg(x: Any) { if (logging) println(x) }
     val printMsg: PartialFunction[Any, Msg] = {
         case any: Msg ⇒
             logMsg(s"node $nodeID rcvd: $any")

@@ -32,6 +32,7 @@ class Test1_1(_system: ActorSystem) extends TestKit(_system) with ImplicitSender
       Master handle "joinClient 2 0"
       Master handle "joinClient 3 1"
       Master handle "put 2 eyesOfTexas utexas.edu"
+      Master handle "shutdown"
 
 //      Master handle "stabilize"
 //      Master handle "get 3 eyesOfTexas"

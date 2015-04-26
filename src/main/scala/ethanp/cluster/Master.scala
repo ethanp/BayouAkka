@@ -209,9 +209,12 @@ class Master extends BayouMem {
             getMember(id) forward m
             // BLOCK (no `handleNext`)
 
-        case m @ Forward2(i, j) ⇒
+        /**
+         * Either the creation or removal of a broken connection
+         */
+        case m @ NetworkPartition(i, j) ⇒
             Seq(i, j) foreach (getMember(_) forward m)
-            handleNext
+            // BLOCK (no `handleNext`)
 
         case m : BrdcstServers ⇒
             broadcastServers(m)

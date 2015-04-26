@@ -170,7 +170,12 @@ class Server extends BayouMem {
     /**
      * Apply `f` to the node specified in the `Forward2` who is not me
      */
-    def otherID[T](w: Forward2, f: NodeID ⇒ T): T = if (w.i == nodeID) f(w.j) else f(w.i)
+    def otherIDAndRespond[T](w: NetworkPartition, f: NodeID ⇒ T): Unit =
+        if (w.i == nodeID) {
+            f(w.j)
+            masterRef ! Gotten
+        }
+        else f(w.i)
 
     /**
      * From (Lec 11, pg. 6)
@@ -350,8 +355,12 @@ class Server extends BayouMem {
          * so there is no connection to physically break.
          * They all remain connected to the macro-cluster at all times.
          */
-        case fwd: BreakConnection   ⇒ otherID(fwd, connectedServers -= _)
-        case fwd: RestoreConnection ⇒ otherID(fwd, id ⇒ connectedServers += id → knownServers(id))
+        case fwd @ BreakConnection(id1,id2)   ⇒
+            otherIDAndRespond(fwd, connectedServers -= _)
+
+        case fwd @ RestoreConnection(id1,id2) ⇒
+            otherIDAndRespond(fwd, id ⇒ connectedServers += id → knownServers(id))
+
 
         /** prevents antiEntropization */
         case Pause ⇒ isPaused = true
