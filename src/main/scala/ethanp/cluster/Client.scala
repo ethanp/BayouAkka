@@ -10,6 +10,7 @@ import ethanp.cluster.ClusterUtil.NodeID
 class Client extends BayouMem {
 
     // TODO we're assuming client can only connect to a SINGLE server, right?
+    // hopefully will be answered some day: https://piazza.com/class/i5h1h4rqk9t4si?cid=97
     var server: ActorSelection = _
     var serverID: NodeID = _
     var masterRef: ActorRef = _
@@ -21,10 +22,8 @@ class Client extends BayouMem {
             masterRef = sender()
             nodeID = id
 
-
         case m: Get ⇒ server ! m
 
-        /** MUST (I think) be before other `Forward` types... */
         case m: PutAndDelete ⇒
             server ! m
             masterRef ! Gotten
@@ -36,7 +35,7 @@ class Client extends BayouMem {
             println(s.str)
             masterRef ! Gotten
 
-        /** TODO this should just be a selection and should use the code below
+        /**
          * This is sent by the master on memberUp(clientMember)
          */
         case ServerPath(id, path) =>
