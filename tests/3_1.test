@@ -1,0 +1,31 @@
+joinServer 0
+joinServer 1
+joinServer 2
+joinServer 3
+joinServer 4
+joinClient 5 0
+joinClient 6 1
+joinClient 7 2
+joinClient 8 3
+joinClient 9 4
+put 5 abc a
+put 6 abc b
+put 7 def c
+put 8 def d
+put 9 def e
+put 5 def a
+put 6 def b
+put 7 def c
+put 8 abc d
+put 9 abc e
+stabilize
+get 5 abc
+get 6 abc
+get 7 abc
+get 8 abc
+get 9 abc
+get 5 def
+get 6 def
+get 7 def
+get 8 def
+get 9 def
