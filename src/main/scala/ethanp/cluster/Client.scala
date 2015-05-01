@@ -1,7 +1,7 @@
 package ethanp.cluster
 
 import akka.actor._
-import ethanp.cluster.ClusterUtil.NodeID
+import ethanp.cluster.ClusterUtil.{ServerName, LCValue, NodeID}
 
 /**
  * Ethan Petuchowski
@@ -13,7 +13,19 @@ class Client extends BayouMem {
     var server: ActorSelection = _
     var serverID: NodeID = _
     var masterRef: ActorRef = _
+    var serverName: ServerName = _
     override var nodeID: NodeID = -4 // "unset"
+
+    /**
+     * "To find an acceptable server, the session manager
+     *  must check that one or both of these session vectors
+     *  are dominated by the server’s version vector."
+     */
+    val readVec = new MutableVV
+    val writeVec = new MutableVV
+
+    var currWID: LCValue = 0
+    def nextWID(): LCValue = { currWID += 1; currWID }
 
     override def handleMsg: PartialFunction[Any, Unit] = {
 
@@ -21,10 +33,23 @@ class Client extends BayouMem {
             masterRef = sender()
             nodeID = id
 
+        /** Client's "Read" command */
         case m: Get ⇒ server ! m
 
+        /**
+         * These are the Client "Write" commands
+         *
+         *  - To provide the Session Guarantees, we must compare the server's VV with ours
+         *    in different ways depending on what we're trying to do.
+         *  - To compare, we could either request theirs or send ours.
+         *  - I think it would be 1 less step to just send ours with the request, then
+         *    the Server can decide to send back ERR_DEP or whatever is appropriate.
+         *  - Clients do NOT cache data they read.
+         *  - I am assuming each test-script corresponds to a SINGLE "session"
+         */
         case m: PutAndDelete ⇒
-            server ! m
+            // TODO change reception of this from Put & Delete on Server-side
+            server ! ClientWrite(ImmutableVV(writeVec), m)
             masterRef ! Gotten
 
         /** reply from Server for Get request */
@@ -40,6 +65,10 @@ class Client extends BayouMem {
             serverID = id
             server = ClusterUtil getSelection path
             server ! ClientConnected(nodeID)
+            // server will respond with its ServerName (see below)
+
+        case m: ServerName ⇒
+            serverName = m
             masterRef ! Gotten // master unblocks on CreateClient & RestoreConnection
 
         /** Current server is retiring, and this is the info for a new one */

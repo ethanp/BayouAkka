@@ -441,8 +441,12 @@ class Server extends BayouMem {
          *  If a server is unable to meet these write guarantees
          *       then the write should be dropped" -- https://piazza.com/class/i5h1h4rqk9t4si?cid=90
          */
-        case p @ Put(clientID, _, _) ⇒ appendIfClientKnown(p, clientID)
-        case d @ Delete(clientID, _) ⇒ appendIfClientKnown(d, clientID)
+        case ClientWrite(vv, req) ⇒
+            // TODO check vv against session constraints
+            req match {
+                case p@Put(clientID, _, _) ⇒ appendIfClientKnown(p, clientID)
+                case d@Delete(clientID, _) ⇒ appendIfClientKnown(d, clientID)
+            }
 
         /**
          * Send the client back the Song they requested
@@ -475,7 +479,9 @@ class Server extends BayouMem {
          *  Q: What about if this guy crashes?
          *  A: Nodes cannot simply 'crash'
          */
-        case ClientConnected(id) ⇒ clients += (id → sender)
+        case ClientConnected(id) ⇒
+            clients += (id → sender)
+            sender ! serverName
 
         /**
          * Proposition from someone else that they want to update all of my knowledges.

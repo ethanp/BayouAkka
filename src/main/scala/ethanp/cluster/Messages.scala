@@ -17,8 +17,6 @@ sealed trait Action extends Msg {
 
 class NetworkPartition(val i: NodeID, val j: NodeID) extends MasterMsg
 object NetworkPartition { def unapply(fwd: NetworkPartition): Option[(NodeID, NodeID)] = Some(fwd.i, fwd.j) }
-abstract class PutAndDelete(val i: NodeID) extends Action
-object PutAndDelete { def unapply(pad: PutAndDelete): Option[NodeID] = Some(pad.i) }
 
 trait BrdcstServers extends MasterMsg
 case class  RetireServer(id: NodeID) extends Msg
@@ -27,12 +25,16 @@ case class  RestoreConnection(id1: NodeID, id2: NodeID) extends NetworkPartition
 case class  IDMsg(id: NodeID) extends Msg
 case class  PrintLog(id: NodeID) extends Msg
 
+abstract class PutAndDelete(val i: NodeID) extends Action
+object PutAndDelete { def unapply(pad: PutAndDelete): Option[NodeID] = Some(pad.i) }
 case class  Put(clientID: NodeID, songName: String, url: String) extends PutAndDelete(clientID) {
     override def str: Option[String] = Some(s"PUT:($songName, $url):")
 }
 case class Delete(clientID: NodeID, songName: String) extends PutAndDelete(clientID) {
     override def str: Option[String] = Some(s"PUT:($songName):")
 }
+case class ClientWrite(vv: ImmutableVV, writeReq: PutAndDelete) extends Msg
+
 case class Get(clientID: NodeID, songName: String) extends Msg
 case class Song(songName: String, url: URL) extends Msg {
     def str: String = s"$songName:$url"
