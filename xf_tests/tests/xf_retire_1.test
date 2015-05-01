@@ -1,0 +1,22 @@
+joinServer 0
+joinServer 1
+joinServer 2
+joinClient 3 0
+joinClient 4 1
+joinClient 5 2
+put 3 eyesOfTexas utexas.edu
+stabilize
+pause
+breakConnection 0 1
+breakConnection 0 2
+start
+put 4 a 123.edu
+stabilize
+retireServer 1
+stabilize
+put 5 b 456.edu
+stabilize
+restoreConnection 0 2
+stabilize
+printLog 0
+printLog 2

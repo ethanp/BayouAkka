@@ -13,6 +13,7 @@ get 4 a
 pause
 breakConnection 4 3
 restoreConnection 4 0
+start
 put 4 a def
 get 4 a
 stabilize

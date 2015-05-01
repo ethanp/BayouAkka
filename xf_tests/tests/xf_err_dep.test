@@ -1,0 +1,19 @@
+joinServer 0
+joinServer 1
+pause
+breakConnection 0 1
+start
+joinClient 2 0
+joinClient 3 1
+put 2 a 123
+put 3 a 456
+stabilize
+breakConnection 0 2
+restoreConnection 2 1
+get 2 a
+get 2 b
+get 3 a
+get 3 b
+restoreConnection 0 1
+stabilize
+get 2 a

@@ -1,0 +1,20 @@
+joinServer 0
+joinServer 1
+breakConnection 0 1
+joinClient 2 0
+joinClient 3 0
+joinClient 4 1
+put 2 c0 u0
+stabilize
+get 3 c0
+put 4 c0 u1
+stabilize
+get 4 c0
+put 3 c0 u2
+stabilize
+get 2 c0
+restoreConnection 0 1
+stabilize
+get 2 c0
+get 3 c0
+get 4 c0

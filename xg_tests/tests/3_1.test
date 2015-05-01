@@ -1,0 +1,39 @@
+joinServer 0
+joinServer 1
+joinServer 2
+joinServer 3
+joinServer 4
+joinClient 5 0
+joinClient 6 1
+joinClient 7 2
+joinClient 8 3
+joinClient 9 4
+pause
+put 5 c5 u0
+start
+put 6 c6 u1
+stabilize
+get 5 c5
+get 5 c6
+get 6 c5
+get 6 c6
+get 7 c5
+get 7 c6
+get 8 c5
+get 8 c6
+get 9 c5
+get 9 c6
+joinClient 10 4
+get 10 c5
+get 10 c6
+delete 10 c5
+stabilize
+printLog 0
+put 7 c7 u7
+retireServer 2
+restoreConnection 7 3
+get 5 c7
+get 6 c7
+get 7 c7
+get 8 c7
+get 9 c7
