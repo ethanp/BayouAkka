@@ -475,9 +475,7 @@ class Server extends BayouMem {
          *  Q: What about if this guy crashes?
          *  A: Nodes cannot simply 'crash'
          */
-        case ClientConnected(id) ⇒
-            clients += (id → sender)
-            masterRef ! Gotten // master unblocks on CreateClient
+        case ClientConnected(id) ⇒ clients += (id → sender)
 
         /**
          * Proposition from someone else that they want to update all of my knowledges.

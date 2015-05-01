@@ -9,8 +9,7 @@ import ethanp.cluster.ClusterUtil.NodeID
  */
 class Client extends BayouMem {
 
-    // TODO we're assuming client can only connect to a SINGLE server, right?
-    // hopefully will be answered some day: https://piazza.com/class/i5h1h4rqk9t4si?cid=97
+    /* ≤ 1 server connected at a time */
     var server: ActorSelection = _
     var serverID: NodeID = _
     var masterRef: ActorRef = _
@@ -28,8 +27,6 @@ class Client extends BayouMem {
             server ! m
             masterRef ! Gotten
 
-        case m: IDMsg ⇒ server ! m // instead of `forward` bc I want this `Client` to be the `sender`
-
         /** reply from Server for Get request */
         case s @ Song(name, url) ⇒
             println(s.str)
@@ -37,11 +34,13 @@ class Client extends BayouMem {
 
         /**
          * This is sent by the master on memberUp(clientMember)
+         * and on RestoreConnection
          */
         case ServerPath(id, path) =>
             serverID = id
             server = ClusterUtil getSelection path
             server ! ClientConnected(nodeID)
+            masterRef ! Gotten // master unblocks on CreateClient & RestoreConnection
 
         /** Current server is retiring, and this is the info for a new one */
         case ServerSelection(id, sel) ⇒
@@ -51,6 +50,13 @@ class Client extends BayouMem {
         /* don't reply with `ClientConnected` because that will
            make the server send an extra Gotten to Master */
 //            server ! ClientConnected
+
+        case BreakConnection(a, b) ⇒
+            def oneIsMe = a == nodeID || b == nodeID
+            def oneIsMyServer = a == serverID || b == serverID
+            if (oneIsMe && oneIsMyServer) server = null
+            else log error s"client $nodeID rcvd break-conn for non-existent server"
+            if (a == nodeID) masterRef ! Gotten
 
         case Hello ⇒ println(s"client $nodeID connected to server $serverID")
 

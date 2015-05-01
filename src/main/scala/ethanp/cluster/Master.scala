@@ -217,12 +217,22 @@ class Master extends BayouMem {
             getMember(id) forward m
             // wait for Gotten from Client receiving Song from Server
 
-        /**
-         * Either the creation or removal of a broken connection
-         */
-        case m @ NetworkPartition(i, j) ⇒
+        case m @ BreakConnection(i, j) ⇒
             Seq(i, j) foreach (getMember(_) forward m)
-            // BLOCK (no `handleNext`)
+            // Gotten will be sent by node `i`
+
+        case m @ RestoreConnection(i, j) ⇒
+            if (clients contains i) {
+                getMember(i) ! ServerPath(j, getPath(members(j)))
+            }
+            else if (clients contains j) {
+                getMember(j) ! ServerPath(i, getPath(members(i)))
+            }
+            else {
+                // both are servers
+                // Gotten will be sent by node `i`
+                Seq(i, j) foreach { getMember(_) ! RestoreConnection(j, i) }
+            }
 
         case m : BrdcstServers ⇒
             broadcastServers(m)
