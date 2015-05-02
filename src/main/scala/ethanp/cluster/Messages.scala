@@ -57,7 +57,7 @@ case class  IExist(nodeID: NodeID)      extends Msg
 
 case class Write(commitStamp: LCValue, acceptStamp: AcceptStamp, action: Action) extends Ordered[Write] {
     override def compare(that: Write): Int =
-        if (commitStamp != that.commitStamp) commitStamp compare that.commitStamp
+        if (commitStamp != that.commitStamp) commitStamp - that.commitStamp
         else acceptStamp compare that.acceptStamp
 
     /* 'OP_TYPE:(OP_VALUE):STABLE_BOOL' */

@@ -423,7 +423,8 @@ class Server extends BayouMem {
          * Print my complete `writeLog` to `StdOut` in the specified format
          */
         case PrintLog(id) ⇒
-            writeLog flatMap (_.strOpt) foreach println
+            writeLog.toList flatMap (_.strOpt) foreach println
+            printIf(writeLog)
             masterRef ! Gotten
 
         /**
@@ -525,7 +526,7 @@ class Server extends BayouMem {
                  *   `context stop self` --- exit when `receive` method returns
                  *   `self ! PoisonPill` --- append PoisonPill to mailbox, exit upon receipt
                  */
-                self ! PoisonPill
+                self ! KillEmAll
             }
 
         /**
