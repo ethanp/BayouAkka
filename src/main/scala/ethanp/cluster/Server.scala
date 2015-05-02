@@ -145,7 +145,7 @@ class Server extends BayouMem {
         csn
     }
 
-    def nextAcceptStamp() = AcceptStamp(incrementMyLC(), serverName)
+    def nextAcceptStamp() = AcceptStamp(serverName, incrementMyLC())
 
     def appendAndSync(action: Action): Option[Write] = {
         if (!isRetiring) {
@@ -204,7 +204,7 @@ class Server extends BayouMem {
             isPrimary = true
 
             // assign my name
-            serverName = AcceptStamp(0, null)
+            serverName = AcceptStamp(null, 0)
 
             // init my VersionVector
             myVersionVector = new MutableVV(mutable.Map(serverName → 0))
@@ -252,7 +252,7 @@ class Server extends BayouMem {
 
         isRetiring = true
 
-        /* tell someone of my retirement */
+        /* tell Clients' new Server of my retirement */
         antiEntropizeWith(serverGettingClients._2)
 
         /* NB: after they respond with their VV and I send them my updates, I will leave the cluster */
@@ -465,12 +465,16 @@ class Server extends BayouMem {
          */
         case ClientGet(wVec, rVec, req) =>
             val Get(clientID, songName) = req
-            if ((myVersionVector dominates wVec) &&
-                (myVersionVector dominates rVec) &&
-                (clients contains clientID))
+            val song = getSong(songName)
+            if (song.url == "ERR_KEY") {
+                sender ! song
+                sender ! NewVVs(wVec, rVec)
+            }
+            else if ((myVersionVector dominates wVec) &&
+                     (myVersionVector dominates rVec) &&
+                     (clients contains clientID))
             {
                 log info s"getting song $songName"
-                val song = getSong(songName)
                 log info s"found song $song"
                 sender ! song
                 sender ! NewVVs(wVec, ImmutableVV(myVersionVector))

@@ -208,11 +208,6 @@ class Master extends BayouMem {
             getMember(id) forward m
             // wait for Gotten from Server after having printed
 
-        /* I don't think this will ever actually be called... */
-        case m @ IDMsg(id) ⇒
-            getMember(id) forward m
-            handleNext
-
         case m @ Get(id,_) ⇒
             getMember(id) forward m
             // wait for Gotten from Client receiving NewVVs from Server

@@ -29,7 +29,7 @@ case class  Put(clientID: NodeID, songName: String, url: String) extends PutAndD
     override def str: Option[String] = Some(s"PUT:($songName, $url):")
 }
 case class Delete(clientID: NodeID, songName: String) extends PutAndDelete(clientID) {
-    override def str: Option[String] = Some(s"PUT:($songName):")
+    override def str: Option[String] = Some(s"DELETE:($songName):")
 }
 
 case class ClientWrite(writeVec: ImmutableVV, readVec: ImmutableVV, writeReq: PutAndDelete) extends Msg
@@ -69,7 +69,7 @@ case class Write(commitStamp: LCValue, acceptStamp: AcceptStamp, action: Action)
 object Write {
     def apply(action: Action) = Write
 }
-case class AcceptStamp(acceptVal: LCValue, acceptor: ServerName) extends Msg with Ordered[AcceptStamp] {
+case class AcceptStamp(acceptor: ServerName, acceptVal: LCValue) extends Msg with Ordered[AcceptStamp] {
     override def compare(that: AcceptStamp): Int = {
         if (acceptVal != that.acceptVal) {
             acceptVal compare that.acceptVal
@@ -106,7 +106,7 @@ sealed trait VersionVector extends Ordered[VersionVector] {
     def knowsAbout(name: ServerName) = vectorMap contains name
 
     def isOlderThan(ts: AcceptStamp): Boolean = {
-
+        val AcceptStamp(acc, v) = ts
         /**
          * From (Lec 11, pg. 6)
          *    - If `vec(R_k) ≥ TS_{k,j}`, don't forward writes ACCEPTED by R_j
@@ -114,10 +114,13 @@ sealed trait VersionVector extends Ordered[VersionVector] {
          *
          * Not entirely sure this implementation is correct, I just like how clean it is.
          */
-        def knownAndNewer = knowsAbout(ts.acceptor) && vectorMap(ts.acceptor) < ts.acceptVal
-        def unknownAndNewer = ts.acceptor != null && (this isOlderThan ts.acceptor)
+        def knownAndNewer = knowsAbout(acc) && (vectorMap(acc) < v)
+        def unknownAndNewer = acc != null && (this isOlderThan acc)
         knownAndNewer || unknownAndNewer
     }
+
+    def isSince(acc: AcceptStamp) = !isOlderThan(acc)
+
     def apply(name: ServerName): LCValue = vectorMap(name)
     override def toString: String = vectorMap.toString()
     def size = vectorMap.size
@@ -134,7 +137,9 @@ case class ImmutableVV(vectorMap: immutable.Map[ServerName, LCValue] = immutable
 class MutableVV(val vectorMap: mutable.Map[ServerName, LCValue] = mutable.Map.empty) extends VersionVector {
 
     def dominates(v: VersionVector): Boolean = v.vectorMap.forall { case (sn, lc) ⇒
-            (vectorMap contains sn) && vectorMap(sn) >= lc
+            val since: Boolean = isSince(AcceptStamp(sn, lc))
+            if (!since) printIf(s"ERR_DEP because $vectorMap is missing $sn or is < $lc")
+            since
     }
 
     def increment(name: ServerName): LCValue = {
