@@ -31,6 +31,7 @@ stabilize
 printLog 0
 put 7 c7 u7
 retireServer 2
+stabilize
 restoreConnection 7 3
 get 5 c7
 get 6 c7
