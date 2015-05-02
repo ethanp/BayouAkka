@@ -110,8 +110,8 @@ class Server extends BayouMem {
     def getMyLCValue: LCValue = myVersionVector(serverName)
     def incrementMyLC(): LCValue = myVersionVector increment serverName
     def getRandomServer: (NodeID, ActorSelection) = Random.shuffle(connectedServers).head
-    def appendWrite(write: Write): Unit = writeLog += write
-    def appendAction(action: Action): Unit = appendWrite(makeWrite(action))
+    def appendWrite(write: Write): Write = { writeLog += write ; write }
+    def appendAction(action: Action): Write = appendWrite(makeWrite(action))
     def greaterOf(items: LCValue*): LCValue = Seq(items:_*).max
     def tellMasterImUnstable(): Unit = if (isStabilizing) masterRef ! Updating
 
@@ -147,11 +147,13 @@ class Server extends BayouMem {
 
     def nextAcceptStamp() = AcceptStamp(incrementMyLC(), serverName)
 
-    def appendAndSync(action: Action): Unit = {
+    def appendAndSync(action: Action): Option[Write] = {
         if (!isRetiring) {
-            appendAction(action)
+            val write = appendAction(action)
             antiEntropizeAll()
+            Some(write)
         }
+        else None
     }
 
     /**
@@ -339,11 +341,12 @@ class Server extends BayouMem {
         sender ! GangInitiation(serverName, writeLog, csn, ImmutableVV(myVersionVector))
     }
 
-    def appendIfClientKnown(action: Action, clientID: NodeID) {
+    def appendIfClientKnown(action: Action, clientID: NodeID): Option[Write] = {
         if (clients.keySet contains clientID) {
             tellMasterImUnstable()
             appendAndSync(action)
         }
+        else None
     }
 
     override def handleMsg: PartialFunction[Msg, Unit] = {
@@ -355,10 +358,10 @@ class Server extends BayouMem {
          * so there is no connection to physically break.
          * They all remain connected to the macro-cluster at all times.
          */
-        case fwd @ BreakConnection(id1,id2)   ⇒
+        case fwd@BreakConnection(id1, id2) ⇒
             otherIDAndRespond(fwd, connectedServers -= _)
 
-        case fwd @ RestoreConnection(id1,id2) ⇒
+        case fwd@RestoreConnection(id1, id2) ⇒
             otherIDAndRespond(fwd, id ⇒ connectedServers += id → knownServers(id))
 
 
@@ -441,25 +444,40 @@ class Server extends BayouMem {
          *  If a server is unable to meet these write guarantees
          *       then the write should be dropped" -- https://piazza.com/class/i5h1h4rqk9t4si?cid=90
          */
-        case ClientWrite(vv, req) ⇒
-            // TODO check vv against session constraints
-            req match {
-                case p@Put(clientID, _, _) ⇒ appendIfClientKnown(p, clientID)
-                case d@Delete(clientID, _) ⇒ appendIfClientKnown(d, clientID)
+        case ClientWrite(wVec, rVec, req) ⇒
+            // check vv against session constraints and update it
+            if ((myVersionVector dominates wVec) &&
+                (myVersionVector dominates rVec) &&
+                appendIfClientKnown(req, req.cliID).isDefined)
+            {
+                val updatedWVec = wVec.update(serverName, getMyLCValue)
+                sender ! NewVVs(updatedWVec, rVec)
+            }
+            else {
+                sender ! NewVVs(wVec, rVec)
             }
 
         /**
          * Send the client back the Song they requested
          * Returns ERR_DEP when this server doesn't know it "owns" this client yet
+         * Also sends them their updated VVs, upon reception of which they unblock the Master
          */
-        case Get(clientID, songName) =>
-            if (clients contains clientID) {
+        case ClientGet(wVec, rVec, req) =>
+            val Get(clientID, songName) = req
+            if ((myVersionVector dominates wVec) &&
+                (myVersionVector dominates rVec) &&
+                (clients contains clientID))
+            {
                 log info s"getting song $songName"
                 val song = getSong(songName)
                 log info s"found song $song"
                 sender ! song
+                sender ! NewVVs(wVec, ImmutableVV(myVersionVector))
             }
-            else sender ! Song(songName, "ERR_DEP")
+            else {
+                sender ! Song(songName, "ERR_DEP")
+                sender ! NewVVs(wVec, rVec)
+            }
 
         case KillEmAll ⇒ context.system.shutdown()
 

@@ -215,7 +215,7 @@ class Master extends BayouMem {
 
         case m @ Get(id,_) ⇒
             getMember(id) forward m
-            // wait for Gotten from Client receiving Song from Server
+            // wait for Gotten from Client receiving NewVVs from Server
 
         case m @ BreakConnection(i, j) ⇒
             Seq(i, j) foreach (getMember(_) forward m)

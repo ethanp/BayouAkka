@@ -11,9 +11,7 @@ import scala.collection.{SortedSet, immutable, mutable}
  */
 sealed class Msg() extends Serializable
 sealed trait MasterMsg extends Msg
-sealed trait Action extends Msg {
-    def str: Option[String]
-}
+sealed trait Action extends Msg { def str: Option[String] }
 
 class NetworkPartition(val i: NodeID, val j: NodeID) extends MasterMsg
 object NetworkPartition { def unapply(fwd: NetworkPartition): Option[(NodeID, NodeID)] = Some(fwd.i, fwd.j) }
@@ -25,15 +23,19 @@ case class  RestoreConnection(id1: NodeID, id2: NodeID) extends NetworkPartition
 case class  IDMsg(id: NodeID) extends Msg
 case class  PrintLog(id: NodeID) extends Msg
 
-abstract class PutAndDelete(val i: NodeID) extends Action
-object PutAndDelete { def unapply(pad: PutAndDelete): Option[NodeID] = Some(pad.i) }
+abstract class PutAndDelete(val cliID: NodeID) extends Action
+object PutAndDelete { def unapply(pad: PutAndDelete): Option[NodeID] = Some(pad.cliID) }
 case class  Put(clientID: NodeID, songName: String, url: String) extends PutAndDelete(clientID) {
     override def str: Option[String] = Some(s"PUT:($songName, $url):")
 }
 case class Delete(clientID: NodeID, songName: String) extends PutAndDelete(clientID) {
     override def str: Option[String] = Some(s"PUT:($songName):")
 }
-case class ClientWrite(vv: ImmutableVV, writeReq: PutAndDelete) extends Msg
+
+case class ClientWrite(writeVec: ImmutableVV, readVec: ImmutableVV, writeReq: PutAndDelete) extends Msg
+case class ClientGet(writeVec: ImmutableVV, readVec: ImmutableVV, getReq: Get) extends Msg
+
+case class NewVVs(writeVec: ImmutableVV, readVec: ImmutableVV) extends Msg
 
 case class Get(clientID: NodeID, songName: String) extends Msg
 case class Song(songName: String, url: URL) extends Msg {
@@ -88,9 +90,7 @@ case class CurrentKnowledge(versionVector: ImmutableVV, csn: LCValue) extends An
 case object Hello extends Msg
 case class NewClient(cid: NodeID, sid: NodeID)  extends Msg
 case class NewServer(sid: NodeID) extends Msg
-case object CreationWrite extends Msg with Action {
-    override def str: Option[String] = None // TODO is it correct to not print CreationWrites ?
-}
+case object CreationWrite extends Msg with Action { override def str: Option[String] = None } // don't print
 
 /**
  * For ease of use within servers, I'd like to have a _mutable_ version vector,
@@ -124,14 +124,24 @@ sealed trait VersionVector extends Ordered[VersionVector] {
 }
 
 case class ImmutableVV(vectorMap: immutable.Map[ServerName, LCValue] = immutable.Map.empty) extends VersionVector {
-
+    def update(name: ServerName, lcVal: LCValue): ImmutableVV = {
+        var newMap: Map[ServerName, LCValue] = vectorMap.toSeq.toMap // I *think* this oughtta (shallow) COPY that map
+        newMap += (name → lcVal)
+        ImmutableVV(newMap)
+    }
 }
 
 class MutableVV(val vectorMap: mutable.Map[ServerName, LCValue] = mutable.Map.empty) extends VersionVector {
+
+    def dominates(v: VersionVector): Boolean = v.vectorMap.forall { case (sn, lc) ⇒
+            (vectorMap contains sn) && vectorMap(sn) >= lc
+    }
+
     def increment(name: ServerName): LCValue = {
         vectorMap(name) += 1
         vectorMap(name)
     }
+
     def addNewMember(tup: (ServerName, LCValue)): Unit = vectorMap(tup._1) = tup._2
 
     def updateWith(writes: SortedSet[Write]): Unit = writes foreach update

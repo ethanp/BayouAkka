@@ -21,8 +21,8 @@ class Client extends BayouMem {
      *  must check that one or both of these session vectors
      *  are dominated by the server’s version vector."
      */
-    val readVec = new MutableVV
-    val writeVec = new MutableVV
+    var readVec: ImmutableVV = new ImmutableVV
+    var writeVec: ImmutableVV = new ImmutableVV
 
     var currWID: LCValue = 0
     def nextWID(): LCValue = { currWID += 1; currWID }
@@ -33,29 +33,35 @@ class Client extends BayouMem {
             masterRef = sender()
             nodeID = id
 
-        /** Client's "Read" command */
-        case m: Get ⇒ server ! m
+        /**
+         * Client's "Read" command
+         * Wait for NewVVs then unblock Master
+         */
+        case m: Get ⇒ server ! ClientGet(writeVec, readVec, m)
 
         /**
-         * These are the Client "Write" commands
+         * CLI issued "Write" command Put or Delete
          *
-         *  - To provide the Session Guarantees, we must compare the server's VV with ours
-         *    in different ways depending on what we're trying to do.
-         *  - To compare, we could either request theirs or send ours.
-         *  - I think it would be 1 less step to just send ours with the request, then
-         *    the Server can decide to send back ERR_DEP or whatever is appropriate.
-         *  - Clients do NOT cache data they read.
-         *  - I am assuming each test-script corresponds to a SINGLE "session"
+         * I am assuming each test-script corresponds to a SINGLE "session"
+         *
+         * Tell Server with VVs
+         * Server will DROP if session props aren't satisfied
+         * Server will respond with `NewVVs` (below)
+         * Then we acknowledge to Master
          */
-        case m: PutAndDelete ⇒
-            // TODO change reception of this from Put & Delete on Server-side
-            server ! ClientWrite(ImmutableVV(writeVec), m)
+        case m: PutAndDelete ⇒ server ! ClientWrite(writeVec, readVec, m)
+
+        /** received from Server after Read or Write */
+        case NewVVs(wVec, rVec) ⇒
+            writeVec = wVec
+            readVec = rVec
             masterRef ! Gotten
 
-        /** reply from Server for Get request */
-        case s @ Song(name, url) ⇒
-            println(s.str)
-            masterRef ! Gotten
+        /**
+         * Reply from Server for Get request
+         * Wait for NewVVs before unblocking Master
+         */
+        case s @ Song(name, url) ⇒ println(s.str)
 
         /**
          * This is sent by the master on memberUp(clientMember)
