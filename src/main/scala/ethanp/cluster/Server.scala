@@ -5,6 +5,7 @@ import akka.util.Timeout
 import ethanp.cluster.ClusterUtil._
 
 import scala.collection.{SortedSet, immutable, mutable}
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import scala.util.Random
 
@@ -90,9 +91,8 @@ class Server extends BayouMem {
     var clients = Map.empty[NodeID, ActorRef]
 
     /**
-     * TODO how threadsafe is this? I think I need to synchronize accesses to this!
-     * Although actually, I think only one incoming msg gets processed at a time,
-     *      so maybe I won't have concurrency issues?
+     * Only one incoming msg gets processed at a time
+     * so I'm unlikely to have concurrency issues
      */
     var writeLog = SortedSet.empty[Write]
 
@@ -109,17 +109,36 @@ class Server extends BayouMem {
 
     def getMyLCValue: LCValue = myVersionVector(serverName)
     def incrementMyLC(): LCValue = myVersionVector increment serverName
-    def getRandomServer: (NodeID, ActorSelection) = Random.shuffle(connectedServers).head
+
+    /**
+     * also ensures that the chosen server exists (it may have retired already)
+     * this will hang if there are other servers in existence...
+     */
+    def getRandomServer: (NodeID, ActorSelection) = {
+        while (true) {
+            val (id: NodeID, actSel: ActorSelection) = Random.shuffle(connectedServers).head
+            try {
+                val futureRef: Future[ActorRef] = actSel.resolveOne(2 seconds)
+                // Await.result throws a TimeoutException if `f` is not available after 2 seconds.
+                // Also an exception will be thrown if futureRef is "failed" because
+                //  the desired server does not exist,
+                Await.result(futureRef, 2 seconds)
+                return id → actSel
+            }
+            catch { case e : Throwable ⇒
+                /* NB: we don't remove from connectedServers bc that's not part of the protocol */
+            }
+        }
+        null
+    }
+
     def appendWrite(write: Write): Write = { writeLog += write ; write }
     def appendAction(action: Action): Write = appendWrite(makeWrite(action))
     def greaterOf(items: LCValue*): LCValue = Seq(items:_*).max
     def tellMasterImUnstable(): Unit = if (isStabilizing) masterRef ! Updating
 
     /**
-     * For now instead of having a persistent state and an undo log etc, we just play through....
-     * TODO the easiest next-step would be to store all stable writes and only replay tentatives
-     * The final step of course is to implement the undo-log, though they don't specify that
-     *      any of this is req'd in the assignment-spec....
+     * For now we just play through to build database state upon request...
      */
     def getSong(songName: String): Song = {
 
@@ -235,7 +254,11 @@ class Server extends BayouMem {
         appendAction(Retirement(serverName))
 
         if (isPrimary) {
+
             /* find another primary */
+
+            // TODO this could return a non-existent server!!
+            // I'm not sure yet what to do about that...
             getRandomServer._2 ! URPrimary
 
             // step down
@@ -484,7 +507,18 @@ class Server extends BayouMem {
                 sender ! NewVVs(wVec, rVec)
             }
 
-        case KillEmAll ⇒ context.system.shutdown()
+        /**
+         * After calling this, no new nodes can be added to the cluster.
+         * I don't understand what the difference is between
+         *      the Cluster object
+         *      the context
+         *      the context.system
+         *      etc.
+         *   so I don't know how to handle this properly...
+         */
+        case KillEmAll ⇒
+            printIf(s"server $nodeID shutting down")
+            context.system.shutdown()
 
         /**
          * Received by all connected servers from a new server in the macro-cluster
@@ -512,6 +546,8 @@ class Server extends BayouMem {
          */
         case LemmeUpgradeU ⇒ sender ! CurrentKnowledge(ImmutableVV(myVersionVector), csn)
 
+        case Gotten ⇒ masterRef ! Gotten
+
         /**
          * Bayou Haiku:
          * ------------
@@ -524,13 +560,13 @@ class Server extends BayouMem {
             if (isRetiring) {
 
                 /* unblocks Master waiting on my retirement to complete */
-                masterRef ! Gotten
+                sender ! Gotten
 
                 /* Akka API gives two options for leaving the Cluster:
                  *   `context stop self` --- exit when `receive` method returns
                  *   `self ! PoisonPill` --- append PoisonPill to mailbox, exit upon receipt
                  */
-                self ! KillEmAll
+                context stop self
             }
 
         /**
