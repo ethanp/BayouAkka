@@ -367,14 +367,6 @@ class Server extends BayouMem {
         sender ! GangInitiation(serverName, writeLog, csn, ImmutableVV(myVersionVector))
     }
 
-    def appendIfClientKnown(action: Action, clientID: NodeID): Option[Write] = {
-        if (clients.keySet contains clientID) {
-            tellMasterImUnstable()
-            appendAndSync(action)
-        }
-        else None
-    }
-
     override def handleMsg: PartialFunction[Msg, Unit] = {
 
         /**
@@ -473,27 +465,19 @@ class Server extends BayouMem {
          */
         case ClientWrite(wVec, rVec, req) ⇒
             // check vv against session constraints and update it
-            if (!(myVersionVector dominates wVec)) {
+            var updatedWVec = wVec
+            if (!(myVersionVector dominates wVec))
                 printIf(s"server $nodeID's VV is older than wVec")
-                sender ! NewVVs(wVec, rVec)
-                return null
-            }
-            if (!(myVersionVector dominates rVec)) {
+            else if (!(myVersionVector dominates rVec))
                 printIf(s"server $nodeID's VV is older than rVec")
-                sender ! NewVVs(wVec, rVec)
-                return null
-            }
-            if (appendIfClientKnown(req, req.cliID).isDefined) {
-                printIf(s"server $nodeID appended write to log")
-                val updatedWVec = wVec.update(serverName, getMyLCValue)
-                sender ! NewVVs(updatedWVec, rVec)
-                return null
-            }
-            else {
+            else if (!(clients.keySet contains req.cliID))
                 printIf(s"server $nodeID doesn't know about client ${req.cliID}")
-                sender ! NewVVs(wVec, rVec)
-                return null
+            else {
+                tellMasterImUnstable()
+                appendAndSync(req)
+                updatedWVec = wVec.update(serverName, getMyLCValue)
             }
+            sender ! NewVVs(updatedWVec, rVec)
 
         /**
          * Send the client back the Song they requested
@@ -503,13 +487,9 @@ class Server extends BayouMem {
         case ClientGet(wVec, rVec, req) =>
             val Get(clientID, songName) = req
             val song = getSong(songName)
-            if (song.url == "ERR_KEY") {
-                sender ! song
-                sender ! NewVVs(wVec, rVec)
-            }
-            else if ((myVersionVector dominates wVec) &&
-                     (myVersionVector dominates rVec) &&
-                     (clients contains clientID))
+            if ((myVersionVector dominates wVec) &&
+                 (myVersionVector dominates rVec) &&
+                 (clients contains clientID))
             {
                 log info s"getting song $songName"
                 log info s"found song $song"

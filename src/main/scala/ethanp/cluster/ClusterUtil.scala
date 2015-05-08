@@ -18,7 +18,7 @@ object ClusterUtil {
 
     val INF: LCValue = Integer.MAX_VALUE
 
-    val logging = true
+    val logging = false
     def printIf(x: Any) { if (logging) println(x) }
 
     var systems = List.empty[ActorSystem]

@@ -14,6 +14,6 @@ breakConnection 4 0
 restoreConnection 4 3
 start
 put 4 a def
-get a
+get 4 a
 stabilize
-get a
+get 4 a

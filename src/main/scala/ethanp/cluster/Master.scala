@@ -157,85 +157,47 @@ class Master extends BayouMem {
      * and get rid of having "handleNext" all over the place bc that's just confusing
      * and almost definitely incorrect. */
     override def handleMsg: PartialFunction[Msg, Unit] = {
-         /* CLI Events */
-        case NewServer(sid) ⇒
-            serverID = sid
-            // BLOCK (no `handleNext`)
+
+        case NewServer(sid) ⇒ serverID = sid
 
         case NewClient(cid, sid) ⇒
             clientID = cid
             serverID = sid
-            // BLOCK (no `handleNext`)
 
-        case IExist(id) ⇒ handleNext // a server is fully up and running, so we can unblock
+        // a server is fully up and running, so we can unblock
+        case IExist(id) ⇒ handleNext
 
-        /**
-         * used to terminate blocking for the following 'distributed routines'
-         *   - GET cmd
-         *   - retirement
-         *   - create client
-         */
+        /** used to terminate blocking */
         case Gotten ⇒ handleNext
 
         case m @ RetireServer(id) ⇒
             getMember(id) ! m
-
-            // kick them out of the cluster
-//            Cluster.get(context.system).leave(members(id).address)
-
-            // remove from known servers
             members -= id
-
-            // BLOCK (no `handleNext`)
 
         case Hello ⇒
             broadcastAll(Hello)
             handleNext
 
-        /* TODO not currently used */
-        case KillEmAll ⇒
-            /* `system.shutdown()` "will stop the guardian actor,
-             * which in turn will recursively stop all its child actors,
-             * then the system guardian (below which the logging actors reside)
-             * and the execute all registered termination handlers"
-             */
-//            (members ++ retiredServers).values foreach { selFromMember(_) ! KillEmAll }
-            members.values foreach { selFromMember(_) ! KillEmAll }
-//            Actor.registry.shutdownAll
-            printIf("master shutting down")
-            context.system.actorSelection("/user/*") ! PoisonPill
-            context.system.shutdown()
-            printIf("master should have left by now")
+        // wait for Gotten from Client (should be real quick)
+        case m @ PutAndDelete(id) ⇒ getMember(id) forward m
 
-        case m @ PutAndDelete(id) ⇒
-            getMember(id) forward m
-            // wait for Gotten from Client (should be real quick)
+        // wait for Gotten from Server after having printed
+        case m @ PrintLog(id) ⇒ getMember(id) forward m
 
-        case m @ PrintLog(id) ⇒
-            getMember(id) forward m
-            // wait for Gotten from Server after having printed
+        // wait for Gotten from Client receiving NewVVs from Server
+        case m @ Get(id,_) ⇒ getMember(id) forward m
 
-        case m @ Get(id,_) ⇒
-            getMember(id) forward m
-            // wait for Gotten from Client receiving NewVVs from Server
-
-        case m @ BreakConnection(i, j) ⇒
-            Seq(i, j) foreach (getMember(_) forward m)
-            // Gotten will be sent by node `i`
+        // Gotten will be sent by node `i`
+        case m @ BreakConnection(i, j) ⇒ Seq(i, j) foreach (getMember(_) forward m)
 
         case m @ RestoreConnection(i, j) ⇒
-            if (clients contains i) {
-
+            if (clients contains i)
                 getMember(i) ! ServerPath(j, getPath(members(j)))
-            }
-            else if (clients contains j) {
+            else if (clients contains j)
                 getMember(j) ! ServerPath(i, getPath(members(i)))
-            }
-            else {
-                // both are servers
-                // Gotten will be sent by node `i`
-                Seq(i, j) foreach { getMember(_) ! RestoreConnection(j, i) }
-            }
+
+            // both are servers, Gotten will be sent by node `i`
+            else Seq(i, j) foreach { getMember(_) ! RestoreConnection(j, i) }
 
         case m : BrdcstServers ⇒
             broadcastServers(m)
@@ -245,7 +207,6 @@ class Master extends BayouMem {
             broadcastServers(Stabilize)
             stabilizeActor = context.actorOf(Props[StabilizeActor], name = nextStabilizer())
             stabilizeActor ! Hello
-            // BLOCK (no `handleNext`)
 
         case Updating ⇒
             if (stabilizeActor != null)
