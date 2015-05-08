@@ -7,8 +7,8 @@ import akka.cluster.ClusterEvent._
 import akka.cluster.{Cluster, Member}
 import ethanp.cluster.ClusterUtil._
 import ethanp.cluster.Master.handleNext
-import scala.concurrent.duration._
 
+import scala.concurrent.duration._
 import scala.sys.process._
 
 /**
@@ -69,7 +69,7 @@ object Master {
     def handleNext: Unit = {
         printIf("handling next")
         if (sc.hasNextLine) handle(sc.nextLine)
-        else clusterKing ! KillEmAll
+        else ClusterUtil.systems.foreach(_.shutdown())
     }
 
     /**
@@ -126,6 +126,8 @@ class Master extends BayouMem {
      */
     var serverID: NodeID = -1
 
+    var retiredServers = Map.empty[NodeID, Member]
+
     var stabilizeActor: ActorRef = _
     var stabilizerCounter = 0
     def nextStabilizer() = {
@@ -179,7 +181,7 @@ class Master extends BayouMem {
             getMember(id) ! m
 
             // kick them out of the cluster
-            Cluster.get(context.system).leave(members(id).address)
+//            Cluster.get(context.system).leave(members(id).address)
 
             // remove from known servers
             members -= id
@@ -190,15 +192,20 @@ class Master extends BayouMem {
             broadcastAll(Hello)
             handleNext
 
+        /* TODO not currently used */
         case KillEmAll ⇒
-
             /* `system.shutdown()` "will stop the guardian actor,
              * which in turn will recursively stop all its child actors,
              * then the system guardian (below which the logging actors reside)
              * and the execute all registered termination handlers"
              */
-            members.keys foreach { getMember(_) ! KillEmAll }
+//            (members ++ retiredServers).values foreach { selFromMember(_) ! KillEmAll }
+            members.values foreach { selFromMember(_) ! KillEmAll }
+//            Actor.registry.shutdownAll
+            printIf("master shutting down")
+            context.system.actorSelection("/user/*") ! PoisonPill
             context.system.shutdown()
+            printIf("master should have left by now")
 
         case m @ PutAndDelete(id) ⇒
             getMember(id) forward m
@@ -218,6 +225,7 @@ class Master extends BayouMem {
 
         case m @ RestoreConnection(i, j) ⇒
             if (clients contains i) {
+
                 getMember(i) ! ServerPath(j, getPath(members(j)))
             }
             else if (clients contains j) {

@@ -21,8 +21,8 @@ class Client extends BayouMem {
      *  must check that one or both of these session vectors
      *  are dominated by the server’s version vector."
      */
-    var readVec: ImmutableVV = new ImmutableVV
-    var writeVec: ImmutableVV = new ImmutableVV
+    var readVec  = new ImmutableVV
+    var writeVec = new ImmutableVV
 
     var currWID: LCValue = 0
     def nextWID(): LCValue = { currWID += 1; currWID }
@@ -51,7 +51,9 @@ class Client extends BayouMem {
          */
         case m: PutAndDelete ⇒ server ! ClientWrite(writeVec, readVec, m)
 
-        /** received from Server after Read or Write */
+        /**
+         * received from Server after Read or Write for session-guarantee purposes
+         */
         case NewVVs(wVec, rVec) ⇒
             writeVec = wVec
             readVec = rVec

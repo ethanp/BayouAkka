@@ -21,6 +21,8 @@ object ClusterUtil {
     val logging = true
     def printIf(x: Any) { if (logging) println(x) }
 
+    var systems = List.empty[ActorSystem]
+
     def joinClusterAs(role: String): ActorRef = ClusterUtil.joinClusterAs("0", role)
 
     def joinClusterAs(port: String, role: String): ActorRef = {
@@ -28,6 +30,7 @@ object ClusterUtil {
                 withFallback(ConfigFactory.parseString(s"akka.cluster.roles = [$role]")).
                 withFallback(ConfigFactory.load())
         val system = ActorSystem("ClusterSystem", config)
+        systems ::= system
         role match {
             case "server" ⇒ system.actorOf(Props[Server], name = "server")
             case "client" ⇒ system.actorOf(Props[Client], name = "client")
