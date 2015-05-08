@@ -1,7 +1,7 @@
 package ethanp.cluster
 
 import akka.actor._
-import ethanp.cluster.ClusterUtil.{ServerName, LCValue, NodeID}
+import ethanp.cluster.ClusterUtil.{LCValue, NodeID, ServerName}
 
 /**
  * Ethan Petuchowski
@@ -49,7 +49,9 @@ class Client extends BayouMem {
          * Server will respond with `NewVVs` (below)
          * Then we acknowledge to Master
          */
-        case m: PutAndDelete ⇒ server ! ClientWrite(writeVec, readVec, m)
+        case m: PutAndDelete ⇒
+            ClusterUtil.printIf(s"client $nodeID sending $serverID @ $server a write")
+            server ! ClientWrite(writeVec, readVec, m)
 
         /**
          * received from Server after Read or Write for session-guarantee purposes

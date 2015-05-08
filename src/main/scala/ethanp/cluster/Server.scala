@@ -253,30 +253,31 @@ class Server extends BayouMem {
         /* This disables future writes from being appended to the log */
         appendAction(Retirement(serverName))
 
+        val randomServer = getRandomServer
         if (isPrimary) {
 
             /* find another primary */
 
             // TODO this could return a non-existent server!!
             // I'm not sure yet what to do about that...
-            getRandomServer._2 ! URPrimary
+            randomServer._2 ! URPrimary
 
             // step down
             isPrimary = false
         }
+        isRetiring = true
+        antiEntropizeWith(randomServer._2)
 
-        /**
+        /** THEY TOOK THIS OUT OF THE PROJECT.
          * tell my clients of a different server to connect to
          * though if by the time the client connects the NEW server has already retired
          * there are going to be issues. But I don't think they'll test that.
          */
-        val serverGettingClients = getRandomServer
-        clients foreach (_._2 ! ServerSelection(id=serverGettingClients._1, sel=serverGettingClients._2))
+//        val serverGettingClients = getRandomServer
+//        printIf(s"server $nodeID sending clients a new daddy, viz ${serverGettingClients._1}")
+//        clients foreach (_._2 ! ServerSelection(id=serverGettingClients._1, sel=serverGettingClients._2))
 
-        isRetiring = true
 
-        /* tell Clients' new Server of my retirement */
-        antiEntropizeWith(serverGettingClients._2)
 
         /* NB: after they respond with their VV and I send them my updates, I will leave the cluster */
     }
@@ -292,6 +293,8 @@ class Server extends BayouMem {
         val writeLogAcceptStamps: Map[ServerName, LCValue] =
             writeLog.toList.map(w ⇒ w.acceptStamp → w.commitStamp).toMap
 
+        if (w.writes.isEmpty) return
+
         // ignore anything I have verbatim, or if I have the committed version already
         val rcvdWrites = w.writes filterNot { w ⇒
             def haveWriteVerbatim = writeLog contains w
@@ -302,7 +305,7 @@ class Server extends BayouMem {
             haveWriteVerbatim || haveCommittedVersion
         }
 
-        if (rcvdWrites isEmpty) return
+        if (rcvdWrites.isEmpty) return
 
         tellMasterImUnstable()
 
@@ -470,15 +473,26 @@ class Server extends BayouMem {
          */
         case ClientWrite(wVec, rVec, req) ⇒
             // check vv against session constraints and update it
-            if ((myVersionVector dominates wVec) &&
-                (myVersionVector dominates rVec) &&
-                appendIfClientKnown(req, req.cliID).isDefined)
-            {
+            if (!(myVersionVector dominates wVec)) {
+                printIf(s"server $nodeID's VV is older than wVec")
+                sender ! NewVVs(wVec, rVec)
+                return null
+            }
+            if (!(myVersionVector dominates rVec)) {
+                printIf(s"server $nodeID's VV is older than rVec")
+                sender ! NewVVs(wVec, rVec)
+                return null
+            }
+            if (appendIfClientKnown(req, req.cliID).isDefined) {
+                printIf(s"server $nodeID appended write to log")
                 val updatedWVec = wVec.update(serverName, getMyLCValue)
                 sender ! NewVVs(updatedWVec, rVec)
+                return null
             }
             else {
+                printIf(s"server $nodeID doesn't know about client ${req.cliID}")
                 sender ! NewVVs(wVec, rVec)
+                return null
             }
 
         /**
