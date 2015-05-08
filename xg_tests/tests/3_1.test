@@ -8,9 +8,7 @@ joinClient 6 1
 joinClient 7 2
 joinClient 8 3
 joinClient 9 4
-pause
 put 5 c5 u0
-start
 put 6 c6 u1
 stabilize
 get 5 c5
@@ -30,6 +28,9 @@ delete 10 c5
 stabilize
 printLog 0
 put 7 c7 u7
+pause
+breakConnection 7 2
+start
 retireServer 2
 stabilize
 restoreConnection 7 3

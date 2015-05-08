@@ -1,0 +1,16 @@
+joinServer 0
+joinServer 1
+joinServer 2
+joinServer 3
+joinClient 4 0
+put 4 x0 y0
+pause
+breakConnection 4 0
+restoreConnection 4 1
+start
+retireServer 0
+retireServer 2
+put 4 x1 y1
+stabilize
+printLog 1
+printLog 3

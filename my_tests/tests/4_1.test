@@ -13,5 +13,7 @@ pause
 breakConnection 0 4
 restoreConnection 3 4
 start
+get 4 a
 stabilize
+retireServer 0
 get 4 a

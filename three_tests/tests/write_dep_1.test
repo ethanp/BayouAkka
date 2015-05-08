@@ -1,0 +1,15 @@
+joinServer 0
+joinServer 1
+joinClient 2 0
+pause
+put 2 x0 y0
+breakConnection 2 0
+restoreConnection 2 1
+put 2 x1 y1
+start
+stabilize
+put 2 x2 y2
+stabilize
+printLog 0
+printLog 1
+get 2 x1

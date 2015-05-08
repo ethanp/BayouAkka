@@ -1,0 +1,18 @@
+joinServer 0
+joinClient 1 0
+joinClient 2 0
+put 1 x y1
+put 2 x y2
+put 1 x y1
+put 2 x y2
+put 2 x y2
+put 1 x y1
+get 1 x
+get 2 x
+delete 2 x
+put 1 x y1
+delete 1 x
+put 2 x y2
+get 1 x
+get 2 x
+printLog 0
